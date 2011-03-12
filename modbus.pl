@@ -9,7 +9,7 @@ $mysql_passwd = "********";
 $db = "zelio";
 $rbase = 24;
 
-use Time::HiRes;
+use Time::HiRes "gettimeofday";
 use DBI;
 
 sub init
@@ -18,12 +18,10 @@ sub init
 		"t1" => "",
 		"t2" => "",
 		"termostat" => 0,
-		"mint1" => "",
-		"mint2" => "",
 		"electro_cnt" => "");
 	%wvar = (
 		"mint1" => "22",
-		"mint2" => "22",
+		"mint2" => "21.5",
 		"boiler" => "0");
 }
 
@@ -122,20 +120,18 @@ sub request
 	$termostat = 0x1;
 	$set_mint1 = 0x1;
 	$set_mint2 = 0x3;
-	$valid_mint1 = 0x2;
-	$valid_mint2 = 0x4;
-	$valid_electro = 0x8;
+	$valid_mint1 = 0x4;
+	$valid_mint2 = 0x8;
+	$valid_electro = 0x10;
 	$valid_outbits = 1<<13;
 
 	logwrite(4, "request");
 	($prev, $prevus) = ($now, $nowus);
 	($now, $nowmus) = gettimeofday();
+	modbus_write_registers(0, 1, 0) || return undef;	# reset alive
 	modbus_write_registers(0, 1, $alive|$q_electro) || return undef;
 	(($r, $el_cnt, $el_time) = modbus_read_registers(0+$rbase, 3)) || return undef;
-	if (!($r & $alive)) {
-		logwrite(1, "Incorrect alive output");
-		return undef;
-	}
+	#logwrite(2, "el_cnt: $el_cnt, el_time: $el_time");
 	$el_cnt += $el_cnt_base;
 	if ($last_cnt > $el_cnt) {
 		if ($last_cnt < $el_cnt+65536 && $last_cnt > $el_cnt+65536+5) {
@@ -143,7 +139,7 @@ sub request
 			$el_cnt += 65536;
 		}
 	}
-	if ($r & $valid_electro) {
+	if ($r & $valid_electro && $el_time) {
 		set_var("electro_cnt", $el_cnt-$last_cnt);
 		set_var("electro_pwr", (3600/800*5000)/$el_time); # Watt
 	}
@@ -161,14 +157,17 @@ sub request
 		logwrite(1, "Incorrect alive output");
 		return undef;
 	}
+	#logwrite(2, "t1: " . ($t1/10) . ", mint1: " . ($mint1/10) . ", termostat " . (($r & $termostat) ? "on" : "off"));
 	set_var("t1", $t1/10);
 	set_var("termostat", ($r & $termostat) ? 1 : 0);
 	$rvar{"boiler"} = ($r & $boiler_out) ? 1 : 0;
-	if ($r & $valid_mint1) {
-		$rvar{"mint1"} = $wvar{"mint1"} = $mint1/10;
-	} else {
+#	if ($r & $valid_mint1) {
+#		$rvar{"mint1"} = $wvar{"mint1"} = $mint1/10;
+#	} else {
+	if ($mint1 != int($wvar{"mint1"}*10+0.5) || !($r & $valid_mint1)) {
 		# controller reloaded? set mint1
-		modbus_write_registers(0, 2, $set_mint1, $wvar{$mint1}*10) || return undef;
+		#logwrite(2, "set mint1 to " . int($wvar{"mint1"}*10+0.5));
+		modbus_write_registers(0, 2, $set_mint1, int($wvar{"mint1"}*10+0.5)) || return undef;
 	}
 	modbus_write_registers(0, 1, $q_temp2) || return undef;
 	(($r, $t2, $mint2) = modbus_read_registers(0+$rbase, 3)) || return undef;
@@ -176,19 +175,22 @@ sub request
 		logwrite(1, "Incorrect alive output");
 		return undef;
 	}
+	#logwrite(2, "t2: " . ($t2/10) . ", mint2: " . ($mint2/10) . ", boiler " . (($r & $boiler_out) ? "on" : "off"));
 	set_var("t2", $t2/10);
-	if ($r & $valid_mint2) {
-		$rvar{"mint2"} = $wvar{"mint2"} = $mint2/10;
-	} else {
+#	if ($r & $valid_mint2) {
+#		$rvar{"mint2"} = $wvar{"mint2"} = $mint2/10;
+#	} else {
+	if ($mint2 != int($wvar{"mint2"}*10+0.5) || !($r & $valid_mint2)) {
 		# controller reloaded? set mint2
-		modbus_write_registers(0, 2, $set_mint2, $wvar{$mint2}*10) || return undef;
+		#logwrite(2, "set mint2 to " . int($wvar{"mint2"}*10+0.5));
+		modbus_write_registers(0, 2, $set_mint2, int($wvar{"mint2"}*10+0.5)) || return undef;
 	}
 	$cur_boiler = ($r & $boiler_out) ? 1 : 0;
 	if ($cur_boiler && $now>$prev && $now-$prev<60) {
 		$sum{"boiler"} += $now-$prev;
 	}
 	if ($cur_boiler != $wvar{"boiler"}) {
-		logwrite(0, "Incorrect boiler state");
+		logwrite(0, "Incorrect boiler state, should be " . ($wvar{"boiler"} ? "on" : "off"));
 		if ($boiler_state_alarm == 1) {
 			sms_alarm("Incorrect boiler state");
 			$boiler_state_alarm = 2;
@@ -197,11 +199,10 @@ sub request
 		$boiler_state_alarm = 0;
 	}
 	# need to change boiler state?
-	$new_boiler = set_boiler();
-	if ($new_boiler != $cur_boiler) {
-		logwrite(1, "boiler " . ($new_boiler ? "on" : "off"));
-		$wvar{"boiler"} = $new_boiler;
-		modbus_write_registers(0, 3, $set_output, $set_boiler, $new_boiler ? $set_boiler : 0) ||
+	$wvar{"boiler"} = set_boiler();
+	if ($wvar{"boiler"} != $cur_boiler) {
+		logwrite(1, "boiler " . ($wvar{"boiler"} ? "on" : "off"));
+		modbus_write_registers(0, 3, $set_output, $boiler_set, $wvar{"boiler"} ? $boiler_set : 0) ||
 			return undef;
 	}
 	if (($prev - $prev % $period) != ($now - $now % $period)) {
@@ -219,9 +220,9 @@ sub periodic
 		$max{$var} = $cur_max{$var};
 		$min{$var} = $cur_min{$var};
 	}
-	$avg{"electro_pwr"} = sum{"electro_cnt"}*3600/800*1000/$period; # Watt
-	$avg{'boiler'} = int($sum{'boiler'}*100/$period+0.5);
-	$avg{'termostat'} = int($avg{'termostat'}*100+0.5); # percents
+	$avg{"electro_pwr"} = $sum{"electro_cnt"}*3600/800*1000/$period; # Watt
+	$avg{"boiler"} = int($sum{"boiler"}*100/$period+0.5);
+	$avg{"termostat"} = int($avg{"termostat"}*100+0.5); # percents
 	# store to mysql
 	connect_mysql();
 	if ($dbh) {
@@ -255,7 +256,7 @@ sub periodic
 		$sum{$var} = $num{$var} = 0;
 		$cur_max{$var} = $cur_min{$var} = undef;
 	}
-	$sum{'boiler'} = 0;
+	$sum{"boiler"} = 0;
 }
 
 sub day
@@ -324,20 +325,24 @@ sub set_boiler
 	$cnt = 0;
 	$cnt++ if $rvar{"t1"} < $wvar{"mint1"};
 	$cnt++ if $rvar{"t2"} < $wvar{"mint2"};
-	$cnt++ if !$rvar{"termostat"};
-	if ($rvar{"t1"} < 10 || $rvar{"t1"} > 27 && !$t1_alarmed) {
+	$cnt++ if $rvar{"termostat"};
+	if (($rvar{"t1"} < 10 || $rvar{"t1"} > 27) && !$t1_alarmed) {
 		sms_alarm("t1 " . $rvar{"t1"});
 		$t1_alarmed = time();
 	} elsif ($rvar{"t1"} > 12 && $rvar{"t1"} < 25) {
 		$t1_alarmed = 0;
 	}
-	if ($rvar{"t2"} < 10 || $rvar{"t2"} > 27 && !$t1_alarmed) {
+	if (($rvar{"t2"} < 10 || $rvar{"t2"} > 27) && !$t2_alarmed) {
 		sms_alarm("t2 " . $rvar{"t2"});
 		$t2_alarmed = time();
 	} elsif ($rvar{"t2"} > 12 && $rvar{"t2"} < 25) {
 		$t2_alarmed = 0;
 	}
-	return ($cnt > 1 ? 1 : 0);
+	if ($t1>-40 || $t2>-40) {
+		return ($cnt > 1 ? 1 : 0);
+	} else {
+		return $rvar{"termostat"};
+	}
 }
 
 sub connect_mysql
