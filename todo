@@ -1,0 +1,7 @@
+
+- snmp
+- several devices
+- zelio (option or configure)
+- tcp: zelio or modbus?
+- gcc options (debug, warnings)
+

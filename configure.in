@@ -1,0 +1,117 @@
+
+
+AC_INIT(modbus.c)
+
+AC_PROG_CC
+
+dnl Checks for library functions.
+AC_CHECK_FUNCS(daemon accept4)
+
+dnl -------------------------------------------------------------------------
+dnl Check for MSG_NOSIGNAL
+
+AC_MSG_CHECKING(for MSG_NOSIGNAL)
+AC_TRY_COMPILE([
+#include <sys/types.h>
+#include <sys/socket.h>
+], [
+  return MSG_NOSIGNAL;
+], AC_DEFINE(HAVE_MSG_NOSIGNAL) AC_MSG_RESULT(yes),
+AC_MSG_RESULT(no),
+AC_MSG_RESULT(cross-compiling. No assumptions made)
+)
+
+AC_PATH_PROG(PERL, perl, perl)
+AC_MSG_CHECKING(for libperl)
+PERLDIR=`$PERL -MConfig -e 'print $Config{archlib}' 2>/dev/null`
+if PERLCOPT=`$PERL -MExtUtils::Embed -e ccopts 2>/dev/null`
+then
+  PERLLOPT=`$PERL -MExtUtils::Embed -e ldopts`
+  case x$PERLDIR in
+    x)
+      AC_MSG_RESULT(yes)
+      ;;
+    *)
+      AC_MSG_RESULT($PERLDIR)
+      ;;
+  esac
+else
+  case x$PERLDIR in
+    x)
+      AC_MSG_RESULT(no)
+      ;;
+    *)
+      PERLCOPT="-I $PERLDIR/CORE -Dbool=char -DHAS_BOOL"
+      PERLLOPT="$PERLDIR/auto/DynaLoader/DynaLoader.a -L$PERLDIR/CORE -lperl -ldl -lcrypt -lm"
+      AC_CHECK_LIB(dl, main, PERLLOPT="$PERLLOPT -ldl")
+      AC_CHECK_LIB(crypt, main, PERLLOPT="$PERLLOPT -lcrypt")
+      AC_CHECK_LIB(m, main, PERLLOPT="$PERLLOPT -lm")
+      AC_CHECK_LIB(socket, main, PERLLOPT="$PERLLOPT -lsocket")
+      AC_MSG_RESULT($PERLDIR)
+      ;;
+  esac
+fi
+case x$PERLCOPT in
+  x)
+    ;;
+  *)
+    AC_MSG_CHECKING(for working libperl)
+    OLD_LIBS=$LIBS
+    OLD_CFLAGS=$CFLAGS
+    LIBS="$LIBS $PERLLOPT"
+    CFLAGS="$CFLAGS $PERLCOPT"
+    AC_TRY_RUN([
+       #include <EXTERN.h>
+       #include <perl.h>
+       #include <XSUB.h>
+       int main(int argc, char** argv, char** env) {
+         return perl_alloc() ? 0 : 1;
+       }],
+     AC_MSG_RESULT(yes),
+     AC_MSG_RESULT(no); AC_ERROR(No working libperl found),
+     AC_MSG_RESULT(cross-compiling. No assumptions made); CFLAGS=$OLD_CFLAGS; LIBS=$OLD_LIBS
+    )
+    AC_MSG_CHECKING(for perl multiplicity)
+    AC_TRY_RUN([
+       #include <EXTERN.h>
+       #include <perl.h>
+       #include <XSUB.h>
+       int main(int argc, char** argv, char** env) {
+         PerlInterpreter *one_perl, *two_perl;
+         int i1=0, i2=0;
+         SV *sv;
+         char *one_args[] = { "one_perl",  "-e", "\$_=1" };
+         char *two_args[] = { "two_perl",  "-e", "\$_=2" };
+         PERL_SYS_INIT3(&argc,&argv,&env);
+         one_perl = perl_alloc();
+         perl_construct(one_perl);
+         perl_parse(one_perl, NULL, 3, one_args, (char **)NULL);
+         two_perl = perl_alloc();
+         PERL_SET_CONTEXT(two_perl);
+         perl_construct(two_perl);
+         perl_parse(two_perl, NULL, 3, two_args, (char **)NULL);
+         PERL_SET_CONTEXT(one_perl);
+         perl_run(one_perl);
+         if ((sv = perl_get_sv("_", FALSE))) i1 = SvIV(sv);
+         PERL_SET_CONTEXT(two_perl);
+         perl_run(two_perl);
+         if ((sv = perl_get_sv("_", FALSE))) i2 = SvIV(sv);
+         PERL_SET_CONTEXT(one_perl);
+         perl_destruct(one_perl);
+         perl_free(one_perl);
+         PERL_SET_CONTEXT(two_perl);
+         perl_destruct(two_perl);
+         perl_free(two_perl);
+         PERL_SYS_TERM();
+         return (i1==1 && i2==2 ? 0 : 1);
+       }],
+     AC_DEFINE(PERL_MULTIPLICITY) AC_MSG_RESULT(yes),
+     AC_MSG_RESULT(no),
+     AC_MSG_RESULT(cross-compiling. No assumptions made)
+    )
+    ;;
+esac
+
+dnl -------------------------------------------------------------------------
+
+AC_OUTPUT(Makefile)

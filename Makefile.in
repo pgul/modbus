@@ -1,0 +1,14 @@
+
+CC=@CC@
+SRCS=modbus.c
+OBJS=${SRCS:.c=.o}
+CFLAGS=@DEFS@ @CFLAGS@ -DZELIO
+
+all: modbus
+
+modbus: $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $(OBJS) @LIBS@
+
+.c.o:	Makefile
+	$(CC) -c $(CFLAGS) -o $*.o $*.c
+
