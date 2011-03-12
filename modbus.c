@@ -442,7 +442,7 @@ int recv_serial(int sock, char *buf, int num)
 		FD_ZERO(&fd);
 		FD_SET(sock, &fd);
 		tv.tv_sec = 0;
-		tv.tv_usec = INTERVAL;
+		tv.tv_usec = 30000; /* 30 ms or INTERVAL? */
 		r = select(sock+1, &fd, NULL, NULL, &tv);
 		if (r < 0) return r;
 		if (r == 0) {

@@ -7,6 +7,7 @@ $mysql_host = "localhost";
 $mysql_user = "zelio";
 $mysql_passwd = "********";
 $db = "zelio";
+$rbase = 24;
 
 use Time::HiRes;
 use DBI;
