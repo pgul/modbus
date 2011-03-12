@@ -771,13 +771,13 @@ static XS(modbus_write_registers)
 #endif
 	unsigned short r;
 	unsigned off, num, i;
+	char debugstr[256];
 
 	/* fetch registers from stack */
 	if (items < 2) {
 		warning("modbus_write_registers: wrong number of params (need >=2, exists %d)", items);
 		XSRETURN_UNDEF;
 	}
-	debug(3, "call modbus write registers");
 	off = SvUV(ST(0));
 	num = SvUV(ST(1));
 	if (items != num+2) {
@@ -798,10 +798,14 @@ static XS(modbus_write_registers)
 	request[4] = num;
 #endif
 	request[5] = 2*num;
+	debugstr[0] = debugstr[sizeof(debugstr)-1] = '\0';
 	for (i=0; i<num; i++) {
 		r = htons(SvUV(ST(i+2)));
 		memcpy(request+6+2*i,  &r, 2);
+		strncat(debugstr, " ", sizeof(debugstr)-strlen(debugstr)-1);
+		snprintf(debugstr+strlen(debugstr), sizeof(debugstr)-strlen(debugstr)-1, "0x%02X (%d)", SvUV(ST(i+2)), (short)SvUV(ST(i+2)));
 	}
+	debug(2, "modbus write registers at offset %d:%s", off, debugstr);
 	if (modbus_comm(request, 6+2*num, response, sizeof(response)))
 		XSRETURN_UNDEF;
 #ifdef ZELIO
@@ -826,6 +830,7 @@ static XS(modbus_read_registers)
 	char response[2+2*4];
 	unsigned short r;
 	unsigned off, num, i;
+	char debugstr[256];
 
 	if (items != 2) {
 		warning("modbus_read_registers: wrong number of params (need 2, exists %d)", items);
@@ -855,10 +860,13 @@ static XS(modbus_read_registers)
 		XSRETURN_UNDEF;
 	}
 	/* put registers as return array */
+	debugstr[0] = debugstr[sizeof(debugstr)-1] = '\0';
 	for (i=0; i<num; i++) {
-		memcpy(&r, response+2+2*i, 2); XPUSHs(sv_2mortal(newSViv((short)ntohs(r))));
-		debug(3, "Read register %d: %d", i, (short)ntohs(r));
+		memcpy(&r, response+2+2*i, 2); r = (short)ntohs(r); XPUSHs(sv_2mortal(newSViv((short)r)));
+		strncat(debugstr, " ", sizeof(debugstr)-strlen(debugstr)-1);
+		snprintf(debugstr+strlen(debugstr), sizeof(debugstr)-strlen(debugstr)-1, "0x%02X (%d)", r, (short)r);
 	}
+	debug(2, "modbus read registers at offset %d:%s", off, debugstr);
 	XSRETURN(num);
 }
 
