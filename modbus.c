@@ -33,13 +33,14 @@
 #define DEVID		1
 #define SPEED		115200
 #define	BSPEED		B115200
-#define BMODE		PARENB	// PARENB|PARODD|CSTOPB
+#define BMODE		PARENB	/* PARENB|PARODD|CSTOPB */
 #ifdef RTU
 #define INTERVAL	(1000*1000*8*4/SPEED+3)
+#elif ZELIO
+#define INTERVAL	(1000*1000*8*4/SPEED+3)
 #else
-#define INTERVAL	1000
+#define INTERVAL	1000000 /* 1 sec */
 #endif
-#define ZELIO
 
 int verbose = 0, delay = 1000, daemonize = 0, simulate = 0;
 unsigned short int servport = 971, devport = 502;
@@ -384,7 +385,9 @@ int commerror(char *format, ...)
 	buf[sizeof(buf)-1] = '\0';
 	va_end(ap);
 	warning("%s", buf);
-	if (!serial) {
+	if (serial)
+		usleep(1000000); /* 1 sec */
+	else {
 		close(sockclient);
 		sockclient = -1;
 	}
