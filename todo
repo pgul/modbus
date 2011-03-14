@@ -5,4 +5,7 @@
 - tcp: zelio or modbus?
 - gcc options (debug, warnings)
 ? call initgroup() if drop privs
+- sms/mail alarms: report about state changed to on
+- sms/mail alarms: threads
+- alarms: save alarms status on disk
 

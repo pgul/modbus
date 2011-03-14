@@ -213,6 +213,7 @@ sub request
 			$boiler_changed = $now;
 			modbus_write_registers(0, 3, $alive, $boiler_set, $wvar{"boiler"} ? $boiler_set : 0) || return undef;
 			modbus_write_registers(0, 1, $set_output) || return undef;
+		}
 	}
 	if (($prev - $prev % $period) != ($now - $now % $period)) {
 		periodic();
@@ -310,8 +311,8 @@ sub set_var
 	$sum{$var}+=$val;
 	$num{$var}++;
 	$rvar{$var}=$val;
-	$cur_max{$var}=$var if !defined($cur_max{$var}) || $cur_max{$var}<$var;
-	$cur_min{$var}=$var if !defined($cur_min{$var}) || $cur_min{$var}>$var;
+	$cur_max{$var}=$val if (!defined($cur_max{$var}) || $cur_max{$var}<$val);
+	$cur_min{$var}=$val if (!defined($cur_min{$var}) || $cur_min{$var}>$val);
 }
 
 sub sms_alarm
