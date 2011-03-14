@@ -75,14 +75,28 @@ void usage(void)
 	return;
 }
 
-void logwrite(int prio, char *format, va_list ap)
+void logwrite(int level, char *format, va_list ap)
 {
-	char *p;
+	char *p, spaces[20];
+	struct timeval now;
+	struct tm *tm;
+	int prio;
 
+	if (level > verbose) return;
+	gettimeofday(&now, NULL);
+	tm = localtime(&now.tv_sec);
 	vsnprintf(logbuf, sizeof(logbuf)-1, format, ap);
 	if ((p=strrchr(logbuf, '\n')) != NULL && p[1] == '\0')
 		*p = '\0';
+	memset(spaces, ' ', sizeof(spaces));
+	switch (level) {
+		case 0:	prio = LOG_NOTICE; break;
+		case 1:	prio = LOG_INFO; break;
+		default:prio = LOG_DEBUG; break;
+	}
 	syslog(prio, "%s", logbuf);
+	spaces[level >= sizeof(spaces) ? sizeof(spaces)-1 : level] = '\0';
+	fprintf(stderr, "%02u:%02u.%02u.%03u %s%s\n", tm->tm_hour, tm->tm_min, tm->tm_sec, now.tv_usec/1000, spaces, logbuf);
 }
 
 void error(char *format, ...)
@@ -90,9 +104,8 @@ void error(char *format, ...)
 	va_list ap;
 
 	va_start(ap, format);
-	logwrite(LOG_CRIT, format, ap);
+	logwrite(0, format, ap);
 	va_end(ap);
-	fprintf(stderr, "%s\n", logbuf);
 	exit(1);
 }
 
@@ -101,9 +114,8 @@ void warning(char *format, ...)
 	va_list ap;
 
 	va_start(ap, format);
-	logwrite(LOG_ERR, format, ap);
+	logwrite(1, format, ap);
 	va_end(ap);
-	fprintf(stderr, "%s\n", logbuf);
 }
 
 void debug(int level, char *format, ...)
@@ -112,15 +124,8 @@ void debug(int level, char *format, ...)
 	int prio;
 
 	va_start(ap, format);
-	switch (level) {
-		case 0:	prio = LOG_NOTICE; break;
-		case 1:	prio = LOG_INFO; break;
-		default:prio = LOG_DEBUG; break;
-	}
-	logwrite(prio, format, ap);
+	logwrite(level+2, format, ap);
 	va_end(ap);
-	if (level < verbose)
-		fprintf(stderr, "%s\n", logbuf);
 }
 
 void initlog(void)
@@ -242,7 +247,7 @@ void new_client(char *resp, int *resp_len)
 	STRLEN len;
 	SV *sv;
 
-	debug(2, "New client");
+	debug(3, "New client");
 	/* call perl function hello() */
 	{	dSP;
 		ENTER;
@@ -254,7 +259,7 @@ void new_client(char *resp, int *resp_len)
 		sv=POPs;
 		prc = SvPV(sv, len);
 		prc = len ? prc : "";
-		debug(1, "Response: %s", prc);
+		debug(4, "Response: %s", prc);
 		strncpy(resp, prc, *resp_len);
 		*resp_len = (len > *resp_len ? 0 : *resp_len - len);
 		PUTBACK;
@@ -273,7 +278,7 @@ int process_command(char *command, char *resp, int *resp_len)
 	STRLEN len;
 	SV *sv;
 
-	debug(2, "Process command: %s", command);
+	debug(4, "Process command: %s", command);
 	if ((sv = perl_get_sv("bye", TRUE)) != NULL)
 		sv_setiv(sv, 0);
 	/* call perl function command() */
@@ -288,7 +293,7 @@ int process_command(char *command, char *resp, int *resp_len)
 		sv=POPs;
 		prc = SvPV(sv, len);
 		prc = len ? prc : "";
-		debug(1, "Response: %s", prc);
+		debug(4, "Response: %s", prc);
 		strncpy(resp, prc, *resp_len);
 		*resp_len = (len > *resp_len ? 0 : *resp_len - len);
 		PUTBACK;
@@ -310,7 +315,7 @@ int process_command(char *command, char *resp, int *resp_len)
 
 void perl_call_init(void)
 {
-	debug(1, "call init");
+	debug(2, "call init");
 	/* call perl function init() */
 	{	dSP;
 		ENTER;
@@ -334,7 +339,7 @@ int perl_call_request(void)
 	int rc = 0;
 	SV *sv;
 
-	debug(2, "call request");
+	debug(4, "call request");
 	/* call perl function request() */
 	{	dSP;
 		ENTER;
@@ -1121,8 +1126,6 @@ int main(int argc, char *argv[])
 	struct sockaddr_in serv_addr;
 	struct passwd *pw;
 
-	/* char test[] = {1, 0x10, 0, 0, 0xff, 2, 2, 0x21, 0x79 }; printf("0x%02X\n", lrc(test, 9)); exit(0); */
-
 	devhost.s_addr = servhost.s_addr = inet_addr("127.0.0.1");
 	while ((i = getopt(argc, argv, "b:i:dv:u:s")) != -1)
 	{
@@ -1180,6 +1183,12 @@ int main(int argc, char *argv[])
 		error("Bind error: %s", strerror(errno));
 	}
 
+	sockclient = serial ? connect_serial(devline) : connect_client(devhost, devport);
+	if (sockclient == -1) { 
+		close(sockfd);
+		error("Controller not found");
+	}
+
 	/* drop privs */
 	if (uid)
 		if (setuid(uid))
@@ -1192,12 +1201,6 @@ int main(int argc, char *argv[])
 	if (listen(sockfd, 5)) {
 		close(sockfd);
 		error("Listen error: %s", strerror(errno));
-	}
-
-	sockclient = serial ? connect_serial(devline) : connect_client(devhost, devport);
-	if (sockclient == -1) { 
-		close(sockfd);
-		error("Controller not found");
 	}
 
 	if (daemonize) {

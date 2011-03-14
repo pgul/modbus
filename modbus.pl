@@ -1,5 +1,5 @@
 
-$sendmail = "/usr/sbin/sendmail -obb -t -oem";
+$sendmail = "/usr/sbin/sendmail -t -odb -oem";
 $day = "17-00:30, 4-6";
 $period = 300;
 $cycle = 10; # ms
@@ -20,9 +20,10 @@ sub init
 		"termostat" => 0,
 		"electro_cnt" => "");
 	%wvar = (
-		"mint1" => "22",
+		"mint1" => "17",
 		"mint2" => "21.5",
 		"boiler" => "0");
+	logwrite(1, "Perl init() done");
 }
 
 sub hello
@@ -41,20 +42,28 @@ sub command
 	if ($command =~ /^(get|getavg)(?:\s+([a-z0-9_]+))?\s*$/i) {
 		($cmd, $var) = ($1, $2);
 		if ($var eq "" || $var =~ /^all$/i) {
-			$i=0;
 			$res = "";
+			$i=0;
 			foreach (sort keys %rvar) {
-				$res .= (++$i < keys %rvar) ? "r" : "R";
+				$res .= (++$i < keys %rvar || keys %wvar) ? "r" : "R";
 				if ($cmd eq "getavg" && defined($avg{$_})) {
 					$res .= " $_: $avg{$_}\n";
 				} else {
 					$res .= " $_: $rvar{$_}\n";
 				}
 			}
+			$i=0;
+			foreach (sort keys %wvar) {
+				$res .= (++$i < keys %wvar) ? "r" : "R";
+				$res .= " $_: $wvar{$_}\n";
+			}
+
 		} elsif ($cmd eq "getavg" && defined($avg{$var})) {
 			$res = "R $var: $avg{$var}\n";
 		} elsif ($rvar{$var}) {
 			$res = "R $var: $rvar{$var}\n";
+		} elsif ($wvar{$var}) {
+			$res = "R $var: $wvar{$var}\n";
 		} else {
 			$res = "E Unknown variable $var\n";
 		}
@@ -64,6 +73,7 @@ sub command
 			$res = "E Unknown variable $var\n";
 		} else {
 			$wvar{$var} = $val;
+			$res = "R ok\n";
 		}
 		# write registers
 		# ...
@@ -131,7 +141,7 @@ sub request
 	modbus_write_registers(0, 1, 0) || return undef;	# reset alive
 	modbus_write_registers(0, 1, $alive|$q_electro) || return undef;
 	(($r, $el_cnt, $el_time) = modbus_read_registers(0+$rbase, 3)) || return undef;
-	#logwrite(2, "el_cnt: $el_cnt, el_time: $el_time");
+	logwrite(2, "el_cnt: $el_cnt, el_time: $el_time");
 	$el_cnt += $el_cnt_base;
 	if ($last_cnt > $el_cnt) {
 		if ($last_cnt < $el_cnt+65536 && $last_cnt > $el_cnt+65536+5) {
@@ -148,7 +158,8 @@ sub request
 		# controller reloaded?
 		# set output regs (only boiler now)
 		logwrite(0, "Not valid output regs on controller");
-		modbus_write_registers(0, 3, $set_output, 0xffff, ($wvar{"boiler"} ? $boiler_set : 0)) || return undef;
+		modbus_write_registers(0, 3, $alive, 0xffff, ($wvar{"boiler"} ? $boiler_set : 0)) || return undef;
+		modbus_write_registers(0, 1, $set_output) || return undef;
 	}
 
 	modbus_write_registers(0, 1, $q_temp1) || return undef;
@@ -157,17 +168,15 @@ sub request
 		logwrite(1, "Incorrect alive output");
 		return undef;
 	}
-	#logwrite(2, "t1: " . ($t1/10) . ", mint1: " . ($mint1/10) . ", termostat " . (($r & $termostat) ? "on" : "off"));
+	logwrite(5, "t1: " . ($t1/10) . ", mint1: " . ($mint1/10) . ", termostat " . (($r & $termostat) ? "on" : "off"));
 	set_var("t1", $t1/10);
 	set_var("termostat", ($r & $termostat) ? 1 : 0);
 	$rvar{"boiler"} = ($r & $boiler_out) ? 1 : 0;
-#	if ($r & $valid_mint1) {
-#		$rvar{"mint1"} = $wvar{"mint1"} = $mint1/10;
-#	} else {
 	if ($mint1 != int($wvar{"mint1"}*10+0.5) || !($r & $valid_mint1)) {
 		# controller reloaded? set mint1
-		#logwrite(2, "set mint1 to " . int($wvar{"mint1"}*10+0.5));
-		modbus_write_registers(0, 2, $set_mint1, int($wvar{"mint1"}*10+0.5)) || return undef;
+		logwrite(4, "set mint1 to " . int($wvar{"mint1"}*10+0.5));
+		modbus_write_registers(0, 2, $alive, int($wvar{"mint1"}*10+0.5)) || return undef;
+		modbus_write_registers(0, 1, $set_mint1) || return undef;
 	}
 	modbus_write_registers(0, 1, $q_temp2) || return undef;
 	(($r, $t2, $mint2) = modbus_read_registers(0+$rbase, 3)) || return undef;
@@ -175,15 +184,13 @@ sub request
 		logwrite(1, "Incorrect alive output");
 		return undef;
 	}
-	#logwrite(2, "t2: " . ($t2/10) . ", mint2: " . ($mint2/10) . ", boiler " . (($r & $boiler_out) ? "on" : "off"));
+	logwrite(5, "t2: " . ($t2/10) . ", mint2: " . ($mint2/10) . ", boiler " . (($r & $boiler_out) ? "on" : "off"));
 	set_var("t2", $t2/10);
-#	if ($r & $valid_mint2) {
-#		$rvar{"mint2"} = $wvar{"mint2"} = $mint2/10;
-#	} else {
 	if ($mint2 != int($wvar{"mint2"}*10+0.5) || !($r & $valid_mint2)) {
 		# controller reloaded? set mint2
-		#logwrite(2, "set mint2 to " . int($wvar{"mint2"}*10+0.5));
-		modbus_write_registers(0, 2, $set_mint2, int($wvar{"mint2"}*10+0.5)) || return undef;
+		logwrite(4, "set mint2 to " . int($wvar{"mint2"}*10+0.5));
+		modbus_write_registers(0, 2, $alive, int($wvar{"mint2"}*10+0.5)) || return undef;
+		modbus_write_registers(0, 1, $set_mint2) || return undef;
 	}
 	$cur_boiler = ($r & $boiler_out) ? 1 : 0;
 	if ($cur_boiler && $now>$prev && $now-$prev<60) {
@@ -199,11 +206,13 @@ sub request
 		$boiler_state_alarm = 0;
 	}
 	# need to change boiler state?
-	$wvar{"boiler"} = set_boiler();
-	if ($wvar{"boiler"} != $cur_boiler) {
-		logwrite(1, "boiler " . ($wvar{"boiler"} ? "on" : "off"));
-		modbus_write_registers(0, 3, $set_output, $boiler_set, $wvar{"boiler"} ? $boiler_set : 0) ||
-			return undef;
+	if ($now - $boiler_changed >= 60 || $boiler_state_alarm) {
+		$wvar{"boiler"} = set_boiler();
+		if ($wvar{"boiler"} != $cur_boiler) {
+			logwrite(1, "boiler " . ($wvar{"boiler"} ? "on" : "off"));
+			$boiler_changed = $now;
+			modbus_write_registers(0, 3, $alive, $boiler_set, $wvar{"boiler"} ? $boiler_set : 0) || return undef;
+			modbus_write_registers(0, 1, $set_output) || return undef;
 	}
 	if (($prev - $prev % $period) != ($now - $now % $period)) {
 		periodic();
@@ -214,11 +223,13 @@ sub request
 
 sub periodic
 {
+	logwrite(2, "call periodic()");
 	@vars =  qw(t1 t2 electro_cnt electro_pwr);
 	foreach $var (@vars) {
-		$avg{$var} = $num{$var} ? $sum{$var}/$num{$var} : undef;
-		$max{$var} = $cur_max{$var};
-		$min{$var} = $cur_min{$var};
+		$sum{$var} += 0;
+		$avg{$var} = $num{$var} ? $sum{$var}/$num{$var} : 0;
+		$max{$var} = $cur_max{$var}+0;
+		$min{$var} = $cur_min{$var}+0;
 	}
 	$avg{"electro_pwr"} = $sum{"electro_cnt"}*3600/800*1000/$period; # Watt
 	$avg{"boiler"} = int($sum{"boiler"}*100/$period+0.5);
@@ -227,7 +238,7 @@ sub periodic
 	connect_mysql();
 	if ($dbh) {
 		$table = "data";
-		do_mysql("create table if not exist $table (
+		do_mysql("create table if not exists $table (
 		           time timestamp not null default current_timestamp,
 		           unixtime int unsigned not null,
 		           t1 decimal(4, 1),
@@ -240,16 +251,15 @@ sub periodic
 		           el_cnt int unsigned,
 		           el_pwr int unsigned,
 		           max_el_pwr int unsigned,
-		           termostat int unsigned,
 		           boiler int unsigned,
-		           index(timestamp),
+		           index(time),
 		           index(unixtime))");
 		do_mysql("insert $table set unixtime=$now, " .
 		         "                  t1=$avg{'t1'}, maxt1=$max{'t1'}, mint1=$min{'t1'}, " .
-		         "                  t2=$avg{'t2'}, maxt1=$max{'t2'}, mint1=$min{'t2'}, " .
-		         "                  termostat=$rvar{'termostat'}, el_cnt = $sum{'electro_cnt'}, " .
-		         "                  el_pwr=$avg{'electro_pwr'}, max_el_pwr=max{'electro_pwr'}, " .
-		         "                  termostat=$avg{'termostat'}, boiler=$avg{'boiler'}");
+		         "                  t2=$avg{'t2'}, maxt2=$max{'t2'}, mint2=$min{'t2'}, " .
+		         "                  termostat=$avg{'termostat'}, el_cnt = $sum{'electro_cnt'}, " .
+		         "                  el_pwr=$avg{'electro_pwr'}, max_el_pwr=$max{'electro_pwr'}, " .
+		         "                  boiler=$avg{'boiler'}");
 		disconnect_mysql();
 	}
 	foreach $var (@vars) {
