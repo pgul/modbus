@@ -8,4 +8,5 @@
 - sms/mail alarms: report about state changed to on
 - sms/mail alarms: threads
 - alarms: save alarms status on disk
+- day/night temp
 

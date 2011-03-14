@@ -1062,8 +1062,11 @@ void perl_reload(char *perlfile)
 		perl_destruct(perl);
 		perl_free(perl);
 		perl = newperl;
+		PERL_SET_CONTEXT(perl);
+		perl_call_init();
+	} else {
+		PERL_SET_CONTEXT(perl);
 	}
-	PERL_SET_CONTEXT(perl);
 #else
 	PL_perl_destruct_level = 1;
 	perl_destruct(perl);

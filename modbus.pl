@@ -141,7 +141,7 @@ sub request
 	modbus_write_registers(0, 1, 0) || return undef;	# reset alive
 	modbus_write_registers(0, 1, $alive|$q_electro) || return undef;
 	(($r, $el_cnt, $el_time) = modbus_read_registers(0+$rbase, 3)) || return undef;
-	logwrite(2, "el_cnt: $el_cnt, el_time: $el_time");
+	logwrite(5, "el_cnt: $el_cnt, el_time: $el_time");
 	$el_cnt += $el_cnt_base;
 	if ($last_cnt > $el_cnt) {
 		if ($last_cnt < $el_cnt+65536 && $last_cnt > $el_cnt+65536+5) {
@@ -245,9 +245,11 @@ sub periodic
 		           t1 decimal(4, 1),
 		           maxt1 decimal(4, 1),
 		           mint1 decimal(4, 1),
+		           comft1 decimal(4, 1),
 		           t2 decimal(4, 1),
 		           maxt2 decimal(4, 1),
 		           mint2 decimal(4, 1),
+		           comft2 decimal(4, 1),
 		           termostat int unsigned,
 		           el_cnt int unsigned,
 		           el_pwr int unsigned,
@@ -256,8 +258,8 @@ sub periodic
 		           index(time),
 		           index(unixtime))");
 		do_mysql("insert $table set unixtime=$now, " .
-		         "                  t1=$avg{'t1'}, maxt1=$max{'t1'}, mint1=$min{'t1'}, " .
-		         "                  t2=$avg{'t2'}, maxt2=$max{'t2'}, mint2=$min{'t2'}, " .
+		         "                  t1=$avg{'t1'}, maxt1=$max{'t1'}, mint1=$min{'t1'}, comft1=$wvar{'mint1'}, " .
+		         "                  t2=$avg{'t2'}, maxt2=$max{'t2'}, mint2=$min{'t2'}, comft2=$wvar{'mint2'}, " .
 		         "                  termostat=$avg{'termostat'}, el_cnt = $sum{'electro_cnt'}, " .
 		         "                  el_pwr=$avg{'electro_pwr'}, max_el_pwr=$max{'electro_pwr'}, " .
 		         "                  boiler=$avg{'boiler'}");
