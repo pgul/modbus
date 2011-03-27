@@ -135,29 +135,6 @@ void initlog(void)
 	debug(0, "started");
 }
 
-void exitfunc(void)
-{
-	int i;
-
-	debug(0, "shutdown");
-	if (sockclient != -1) {
-		close(sockclient);
-		sockclient = -1;
-	}
-	if (perl) {
-		perl_destruct(perl);
-		perl_free(perl);
-	}
-	for (i=0; i<nservers; i++)
-		close(serv[i].sock);
-	nservers = 0;
-	if (sockfd != -1) {
-		close(sockfd);
-		sockfd = -1;
-	}
-	closelog();
-}
-
 int connect_client(struct in_addr host, unsigned short int port)
 {
 	struct sockaddr_in sin;
@@ -329,6 +306,27 @@ void perl_call_init(void)
 		LEAVE;
 		if (SvTRUE(ERRSV))
 			sub_err("init");
+
+	}
+	return;
+}
+
+void perl_call_deinit(void)
+{
+	debug(2, "call deinit");
+	/* call perl function deinit() */
+	{	dSP;
+		ENTER;
+		SAVETMPS;
+		PUSHMARK(SP);
+		PUTBACK;
+		perl_call_pv("deinit", G_EVAL|G_VOID);
+		SPAGAIN;
+		PUTBACK;
+		FREETMPS;
+		LEAVE;
+		if (SvTRUE(ERRSV))
+			sub_err("deinit");
 
 	}
 	return;
@@ -1032,6 +1030,10 @@ PerlInterpreter *perl_init(char *perlfile, int first)
 		warning("Perl function init() not defined");
 		rc = 1;
 	}
+	if (!perl_get_cv("deinit", FALSE)) {
+		warning("Perl function deinit() not defined");
+		rc = 1;
+	}
 	if (!perl_get_cv("request", FALSE)) {
 		warning("Perl function request() not defined");
 		rc = 1;
@@ -1075,6 +1077,30 @@ void perl_reload(char *perlfile)
 	if (perl == NULL)
 		error("Error in perl module, cannot continue");
 #endif
+}
+
+void exitfunc(void)
+{
+	int i;
+
+	debug(0, "shutdown");
+	if (sockclient != -1) {
+		close(sockclient);
+		sockclient = -1;
+	}
+	if (perl) {
+		perl_call_deinit();
+		perl_destruct(perl);
+		perl_free(perl);
+	}
+	for (i=0; i<nservers; i++)
+		close(serv[i].sock);
+	nservers = 0;
+	if (sockfd != -1) {
+		close(sockfd);
+		sockfd = -1;
+	}
+	closelog();
 }
 
 int get_host(char *str, struct in_addr *host)

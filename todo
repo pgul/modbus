@@ -9,4 +9,5 @@
 - sms/mail alarms: threads
 - alarms: save alarms status on disk
 - day/night temp
+- server inactivity timeout
 
