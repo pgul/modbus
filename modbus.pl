@@ -30,7 +30,7 @@ sub init
 	$wvar{"boiler"} = "0" unless defined($wvar{"boiler"});
 
 	connect_mysql();
-	($last_el_cnt) = select_mysql("select el_cnt from data order by time desc limit 1");
+	($prev_periodic, $last_el_cnt) = select_mysql("select unixtime, el_cnt from data order by time desc limit 1");
 	disconnect_mysql();
 	logwrite(1, "Perl init() done");
 }
@@ -165,12 +165,16 @@ sub request
 	logwrite(5, "el_cnt: $el_cnt, el_time: $el_time");
 	$el_time = 0 if $el_time < 0;
 	$el_cnt += $el_cnt_base;
+	if ($el_cnt < 0) {
+		$el_cnt += 65536;
+		$el_cnt_base += 65536;
+	}
 	if ($last_el_cnt > $el_cnt) {
 		if ($el_cnt < 120) {
 			# controller reloaded
 			$el_cnt_base = $last_el_cnt = 0;
 		}
-		while ($last_el_cnt >= $el_cnt+65536) {
+		while ($last_el_cnt > $el_cnt) {
 			$el_cnt_base += 65536;
 			$el_cnt += 65536;
 		}
@@ -280,6 +284,8 @@ sub periodic
 	$avg{"boiler"} = int($sum{"boiler"}*100/$period+0.5);
 	$avg{"termostat"} = int($avg{"termostat"}*100+0.5); # percents
 	$prev_periodic = $now;
+	$el_cnt = $last_el_cnt if !defined($el_cnt);
+	$el_cnt += 0;
 	# store to mysql
 	connect_mysql();
 	if ($dbh) {
@@ -305,7 +311,7 @@ sub periodic
 		do_mysql("insert $table set unixtime=$now, " .
 		         "                  t1=$avg{'t1'}, maxt1=$max{'t1'}, mint1=$min{'t1'}, comft1=$wvar{'mint1'}, " .
 		         "                  t2=$avg{'t2'}, maxt2=$max{'t2'}, mint2=$min{'t2'}, comft2=$wvar{'mint2'}, " .
-		         "                  termostat=$avg{'termostat'}, el_cnt = $sum{'electro_cnt'}, " .
+		         "                  termostat=$avg{'termostat'}, el_cnt = $el_cnt, " .
 		         "                  el_pwr=$avg{'electro_pwr'}, max_el_pwr=$max{'electro_pwr'}, " .
 		         "                  boiler=$avg{'boiler'}");
 		disconnect_mysql();
