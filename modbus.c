@@ -28,6 +28,7 @@
 #define INQSIZE		16384
 #define OUTQSIZE	16384
 #define MAXSERVERS	16
+#define RESSIZE		1024
 
 #define MTU		128
 #define DEVID		1
@@ -46,10 +47,11 @@ int verbose = 0, delay = 1000, daemonize = 0, simulate = 0;
 unsigned short int servport = 971, devport = 502;
 struct in_addr servhost, devhost;
 uid_t uid;
-struct {
+struct servtype {
 	int sock;
 	int inq_len, outq_len;
 	int bye;
+	int debug;
 	char *inq;
 	char *outq;
 } serv[MAXSERVERS];
@@ -75,12 +77,20 @@ void usage(void)
 	return;
 }
 
+void out_line(struct servtype *serv, char *line, int len)
+{
+	if (len > OUTQSIZE - serv->outq_len)
+		len = OUTQSIZE - serv->outq_len;
+	memcpy(serv->outq + serv->outq_len, line, len);
+	serv->outq_len += len;
+}
+
 void logwrite(int level, char *format, va_list ap)
 {
 	char *p, spaces[20];
 	struct timeval now;
 	struct tm *tm;
-	int prio;
+	int prio, i, len;
 
 	if (level > verbose) return;
 	gettimeofday(&now, NULL);
@@ -97,6 +107,19 @@ void logwrite(int level, char *format, va_list ap)
 	syslog(prio, "%s", logbuf);
 	spaces[level >= sizeof(spaces) ? sizeof(spaces)-1 : level] = '\0';
 	fprintf(stderr, "%02u:%02u.%02u.%03u %s%s\n", tm->tm_hour, tm->tm_min, tm->tm_sec, now.tv_usec/1000, spaces, logbuf);
+	len = strlen(logbuf);
+	if (len == sizeof(logbuf)-1) {
+		logbuf[sizeof(logbuf)-2] = '\0';
+		len = sizeof(logbuf)-2;
+	}
+	strcat(logbuf, "\n");
+	len++;
+	for (i=0; i<nservers; i++) {
+		if (serv[i].bye == 1 || serv[i].debug <= level)
+			continue;
+		out_line(&serv[i], spaces, level >= sizeof(spaces) ? sizeof(spaces)-1 : level);
+		out_line(&serv[i], logbuf, len);
+	}
 }
 
 void error(char *format, ...)
@@ -248,7 +271,7 @@ void new_client(char *resp, int *resp_len)
 	return;
 }
 
-int process_command(char *command, char *resp, int *resp_len)
+int process_command(char *command, char *resp, int *resp_len, int *debuglevel)
 {
 	int rc = 0;
 	char *prc;
@@ -258,6 +281,8 @@ int process_command(char *command, char *resp, int *resp_len)
 	debug(4, "Process command: %s", command);
 	if ((sv = perl_get_sv("bye", TRUE)) != NULL)
 		sv_setiv(sv, 0);
+	if ((sv = perl_get_sv("debug", TRUE)) != NULL)
+		sv_setiv(sv, *debuglevel);
 	/* call perl function command() */
 	{	dSP;
 		ENTER;
@@ -284,8 +309,11 @@ int process_command(char *command, char *resp, int *resp_len)
 				debug(1, "Bye");
 				rc = 1;
 			}
+			sv = perl_get_sv("debug", FALSE);
+			if (sv) {
+				*debuglevel = SvIV(sv);
+			}
 		}
-
 	}
 	return rc;
 }
@@ -1328,12 +1356,15 @@ int main(int argc, char *argv[])
 						washup = 0;
 					}
 					while ((p = memchr(serv[i].inq, '\n', serv[i].inq_len)) != NULL) {
+						char res[RESSIZE];
+						int reslen;
+
 						*p = '\0';
 						if (p > serv[i].inq && *(p-1) == '\r')
 							*(p-1) = '\0';
-						k = OUTQSIZE-serv[i].outq_len;
-						n = process_command(serv[i].inq, serv[i].outq+serv[i].outq_len, &k);
-						serv[i].outq_len = OUTQSIZE-k;
+						reslen = sizeof(res);
+						n = process_command(serv[i].inq, res, &reslen, &serv[i].debug);
+						out_line(serv+i, res, reslen);
 						memcpy(serv[i].inq, p+1, serv[i].inq_len-(p+1-serv[i].inq));
 						serv[i].inq_len -= p+1-serv[i].inq;
 						if (n) /* quit command */
@@ -1356,8 +1387,10 @@ int main(int argc, char *argv[])
 				serv[nservers].sock = newsock;
 				serv[nservers].outq_len = 0;
 				serv[nservers].outq = malloc(OUTQSIZE);
+				serv[nservers].inq_len = 0;
 				serv[nservers].inq = malloc(INQSIZE);
 				serv[nservers].bye = 0;
+				serv[nservers].debug = 0;
 				nservers++;
 				n = OUTQSIZE;
 				new_client(serv[i].outq, &n);

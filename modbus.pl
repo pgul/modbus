@@ -94,8 +94,26 @@ sub command
 	} elsif ($command =~ /^(q|quit|bye)\s*$/i) {
 		$res = "R bye\n";
 		$bye = 1;
+	} elsif ($command =~ /^debug\s+(\d+)$/i) {
+		$debug = $1;
+		$res = "R ok\n";
+	} elsif ($command =~ /^debug\s*$/i) {
+		$res = "R debug level is $debug\n";
+	} elsif ($command =~ /^help\s*$/i) {
+		$res = "r Possible commands:\n";
+		$res .= "r get               - show all variables,\n";
+		$res .= "r get all           - show all variables,\n";
+		$res .= "r get <var>         - show one variable,\n";
+		$res .= "r getavg <var>      - show average variable value,\n";
+		$res .= "r set <var>=<value> - set variable value,\n";
+		$res .= "r debug <level>     - set debug level.\n";
+		$res .= "r (first 'r' char in the lines is not part of this help)\n";
+		$res .= "r example:   set mint1=18.5\n";
+		$res .= "r example:   get boiler\n";
+		$res .= "R example:   get\n";
 	} else {
 		$res = "E What?\n";
+		$debug = 0;
 	}
 	return $res;
 }
