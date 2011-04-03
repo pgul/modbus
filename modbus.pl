@@ -69,15 +69,23 @@ sub command
 			$i=0;
 			foreach (sort keys %wvar) {
 				$res .= (++$i < keys %wvar) ? "r" : "R";
-				$res .= " $_: $wvar{$_}\n";
+				if (defined($tempwvar{$_})) {
+					$res .= " $_: $wvar{$_} ";
+					$res .= "(temporary set $tempwvar{$_} until " . localtime($tempwtime{$_}) . ")\n";
+				} else {
+					$res .= " $_: $wvar{$_}\n";
+				}
 			}
-
 		} elsif ($cmd eq "getavg" && defined($avg{$var})) {
 			$res = "R $var: $avg{$var}\n";
 		} elsif ($rvar{$var}) {
 			$res = "R $var: $rvar{$var}\n";
 		} elsif ($wvar{$var}) {
-			$res = "R $var: $wvar{$var}\n";
+			$res = "R $var: $wvar{$var}";
+			if (defined($tempwvar{$var})) {
+				$res .= " (temporary set $tempwvar{$var} until " . localtime($tempwtime{$var}) . ")";
+			}
+			$res .= "\n";
 		} else {
 			$res = "E Unknown variable $var\n";
 		}
@@ -87,6 +95,22 @@ sub command
 			$res = "E Unknown variable $var\n";
 		} else {
 			$wvar{$var} = $val;
+			$res = "R ok\n";
+		}
+		# write registers
+		# ...
+	} elsif ($command =~ /^tempset\s+(\d+(?::\d+)?)\s+([a-z0-9_]+)=(\S+)\s*$/i) {
+		($time, $var, $val) = ($1, $2, $3);
+		if (!defined($wvar{$var})) {
+			$res = "E Unknown variable $var\n";
+		} else {
+			if ($time =~ /:/) {
+				$duration = $`*60+$';
+			} else {
+				$duration = $time*60;
+			}
+			$tempwvar{$var} = $val;
+			$tempwtime{$var} = time()+$duration*60;
 			$res = "R ok\n";
 		}
 		# write registers
@@ -106,6 +130,7 @@ sub command
 		$res .= "r get <var>         - show one variable,\n";
 		$res .= "r getavg <var>      - show average variable value,\n";
 		$res .= "r set <var>=<value> - set variable value,\n";
+		$res .= "r tempset hh[:mm] <var>=<value> - temporary set variable value,\n";
 		$res .= "r debug <level>     - set debug level.\n";
 		$res .= "r (first 'r' char in the lines is not part of this help)\n";
 		$res .= "r example:   set mint1=18.5\n";
@@ -177,6 +202,13 @@ sub request
 	logwrite(4, "request");
 	($prev, $prevus) = ($now, $nowus);
 	($now, $nowmus) = gettimeofday();
+	foreach (keys %tempwvar) {
+		if ($tempwtime{$_} <= $now) {
+			logwrite(1, "Restored value $_ from $tempwvar{$_} to $wvar{$_}");
+			delete($tempwvar{$_});
+			delete($tempwtime{$_});
+		}
+	}
 	modbus_write_registers(0, 1, 0) || return undef;	# reset alive
 	modbus_write_registers(0, 1, $alive|$q_electro) || return undef;
 	(($r, $el_cnt, $el_time) = modbus_read_registers(0+$rbase, 3)) || return undef;
@@ -208,7 +240,8 @@ sub request
 		# controller reloaded?
 		# set output regs (only boiler now)
 		logwrite(0, "Not valid output regs on controller");
-		modbus_write_registers(0, 3, $alive, 0xffff, ($wvar{"boiler"} ? $boiler_set : 0)) || return undef;
+		$wboiler = (defined($tempwvar{"boiler"}) ? $tempwvar{"boiler"} : $wvar{"boiler"});
+		modbus_write_registers(0, 3, $alive, 0xffff, ($wboiler ? $boiler_set : 0)) || return undef;
 		modbus_write_registers(0, 1, $set_output) || return undef;
 	}
 
@@ -221,7 +254,7 @@ sub request
 	logwrite(5, "t1: " . ($t1/10) . ", mint1: " . ($mint1/10) . ", termostat " . (($r & $termostat) ? "on" : "off"));
 	set_var("t1", $t1/10);
 	set_var("termostat", ($r & $termostat) ? 1 : 0);
-	$rvar{"boiler"} = ($r & $boiler_out) ? 1 : 0;
+	$rvar{"boiler_state"} = ($r & $boiler_out) ? 1 : 0;
 	$rvar{"phase1"} = ($r & $phase1_miss) ? "fail" : "ok";
 	$rvar{"phase2"} = ($r & $phase2_miss) ? "fail" : "ok";
 	$rvar{"phase3"} = ($r & $phase3_miss) ? "fail" : "ok";
@@ -261,8 +294,9 @@ sub request
 	if ($cur_boiler && $now>$prev && $now-$prev<60) {
 		$sum{"boiler"} += $now-$prev;
 	}
-	if ($cur_boiler != $wvar{"boiler"}) {
-		logwrite(0, "Incorrect boiler state, should be " . ($wvar{"boiler"} ? "on" : "off"));
+	$wboiler = (defined($tempwvar{"boiler"}) ? $tempwvar{"boiler"} : $wvar{"boiler"});
+	if ($cur_boiler != $wboiler) {
+		logwrite(0, "Incorrect boiler state, should be " . ($wboiler ? "on" : "off"));
 		if ($boiler_state_alarm == 1) {
 			sms_alarm("Incorrect boiler state");
 			$boiler_state_alarm = 2;
@@ -273,10 +307,11 @@ sub request
 	# need to change boiler state?
 	if ($now - $boiler_changed >= 60 || $boiler_state_alarm) {
 		$wvar{"boiler"} = set_boiler();
-		if ($wvar{"boiler"} != $cur_boiler) {
-			logwrite(1, "boiler " . ($wvar{"boiler"} ? "on" : "off"));
+		$wboiler = (defined($tempwvar{"boiler"}) ? $tempwvar{"boiler"} : $wvar{"boiler"});
+		if ($wboiler != $cur_boiler) {
+			logwrite(1, "boiler " . ($wboiler ? "on" : "off"));
 			$boiler_changed = $now;
-			modbus_write_registers(0, 3, $alive, $boiler_set, $wvar{"boiler"} ? $boiler_set : 0) || return undef;
+			modbus_write_registers(0, 3, $alive, $boiler_set, $wboiler ? $boiler_set : 0) || return undef;
 			modbus_write_registers(0, 1, $set_output) || return undef;
 		}
 	}
@@ -326,9 +361,11 @@ sub periodic
 		           boiler int unsigned,
 		           index(time),
 		           index(unixtime))");
+		$wmint1 = (defined($tempwvar{"mint1"}) ? $tempwvar{"mint1"} : $wvar{"mint1"});
+		$wmint2 = (defined($tempwvar{"mint2"}) ? $tempwvar{"mint2"} : $wvar{"mint2"});
 		do_mysql("insert $table set unixtime=$now, " .
-		         "                  t1=$avg{'t1'}, maxt1=$max{'t1'}, mint1=$min{'t1'}, comft1=$wvar{'mint1'}, " .
-		         "                  t2=$avg{'t2'}, maxt2=$max{'t2'}, mint2=$min{'t2'}, comft2=$wvar{'mint2'}, " .
+		         "                  t1=$avg{'t1'}, maxt1=$max{'t1'}, mint1=$min{'t1'}, comft1=$wmint1, " .
+		         "                  t2=$avg{'t2'}, maxt2=$max{'t2'}, mint2=$min{'t2'}, comft2=$wmint2, " .
 		         "                  termostat=$avg{'termostat'}, el_cnt = $el_cnt, " .
 		         "                  el_pwr=$avg{'electro_pwr'}, max_el_pwr=$max{'electro_pwr'}, " .
 		         "                  boiler=$avg{'boiler'}");
@@ -416,8 +453,8 @@ sub set_boiler
 	# Если в двух местах из трёх ниже комфортной - включаем
 	my ($cnt);
 	$cnt = 0;
-	$cnt++ if $rvar{"t1"} < $wvar{"mint1"};
-	$cnt++ if $rvar{"t2"} < $wvar{"mint2"};
+	$cnt++ if $rvar{"t1"} < (defined($tempwvar{"mint1"}) ? $tempwvar{"mint1"} : $wvar{"mint1"});
+	$cnt++ if $rvar{"t2"} < (defined($tempwvar{"mint2"}) ? $tempwvar{"mint2"} : $wvar{"mint2"});
 	$cnt++ if $rvar{"termostat"};
 	if (($rvar{"t1"} < 10 || $rvar{"t1"} > 27) && !$t1_alarmed) {
 		sms_alarm("t1 " . $rvar{"t1"});
