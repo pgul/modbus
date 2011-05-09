@@ -848,7 +848,7 @@ static XS(modbus_write_registers)
 		snprintf(debugstr+strlen(debugstr), sizeof(debugstr)-strlen(debugstr)-1, "0x%02X (%d)", SvUV(ST(i+2)), (short)SvUV(ST(i+2)));
 	}
 	debug(2, "modbus write registers at offset %d:%s", off, debugstr);
-	if (modbus_comm(request, 6+2*num, response, sizeof(response)))
+	if (modbus_comm(request, 6+2*num, response, serial_proto ? 6 : 5))
 		XSRETURN_UNDEF;
 	if (serial_proto) {
 		if (response[1] == 0 && response[2] == 0 && response[3] == (char)0xFF && response[4] == (char)off && response[5] == num*2) {
@@ -1438,7 +1438,7 @@ int main(int argc, char *argv[])
 			}
 			perl_call_request();
 			next_req.tv_usec += (delay%1000)*1000;
-			next_req.tv_sec += delay/1000 + next_req.tv_usec % 1000000;
+			next_req.tv_sec += delay/1000 + next_req.tv_usec/1000000;
 			next_req.tv_usec %= 1000000;
 			if (next_req.tv_sec < tv_now.tv_sec ||
 			    (next_req.tv_sec == tv_now.tv_sec && next_req.tv_usec <= tv_now.tv_usec)) {
