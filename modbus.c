@@ -58,7 +58,7 @@ struct servtype {
 char *perlfile;
 PerlInterpreter *perl;
 int washup, nservers, sockfd = -1, sockclient = -1;
-int serial = 0, log_opened;
+int serial = 0, serial_proto = 0, log_opened;
 char logbuf[256];
 char *devline;
 
@@ -602,6 +602,22 @@ char unhexbyte(char *buf)
 	return (unhexdigit(buf[0])<<4) + unhexdigit(buf[1]);
 }
 
+char *mem2hex(char *buf, int bufsize)
+{
+	static char hexstr[256];
+	int i;
+
+	hexstr[0] = hexstr[sizeof(hexstr)-1] = '\0';
+	while (bufsize > 0) {
+		if (hexstr[0])
+			strncat(hexstr, " ", sizeof(hexstr)-strlen(hexstr)-1);
+		snprintf(hexstr+strlen(hexstr), sizeof(hexstr)-strlen(hexstr)-1, "0x%02X (%d)", (unsigned char)*buf,*buf);
+		buf++;
+		bufsize--;
+	}
+	return hexstr;
+}
+
 int modbus_comm(char *request, int reqsize, char *response, int respsize)
 {
 	fd_set fd;
@@ -617,28 +633,24 @@ int modbus_comm(char *request, int reqsize, char *response, int respsize)
 	if (simulate) {
 		response[0] = request[0];
 		if (request[0] == 3 || request[0] == 23) { /* read or read/write registers */
-#ifdef ZELIO
-			response[1] = request[5];
-#else
-			response[1] = 2*request[4];
-#endif
+			response[1] = (serial_proto ? request[5] : 2*request[4]);
 			n = htons(1); memcpy(response+2, &n, 2);
 			n = htons(2); memcpy(response+4, &n, 2);
 			n = htons(3); memcpy(response+6, &n, 2);
 			n = htons(4); memcpy(response+8, &n, 2);
 		} else if (request[0] == 16) {
-#ifdef ZELIO
-			response[1] = 0;
-			response[2] = 0;
-			response[3] = 0xff;
-			response[4] = request[4];
-			response[5] = request[5];
-#else
-			response[1] = 0;
-			response[2] = 0;
-			response[3] = 0;
-			response[4] = 4;
-#endif
+			if (serial_proto) {
+				response[1] = 0;
+				response[2] = 0;
+				response[3] = 0xff;
+				response[4] = request[4];
+				response[5] = request[5];
+			} else {
+				response[1] = 0;
+				response[2] = 0;
+				response[3] = 0;
+				response[4] = 4;
+			}
 		}
 		return 0;
 	}
@@ -685,6 +697,7 @@ int modbus_comm(char *request, int reqsize, char *response, int respsize)
 			return commerror("Error in communication with device: %s", strerror(errno));
 		if (n == 0)
 			return commerror("Device communication timeout for writing");
+		debug(6, "send to device: %s", mem2hex(buf, reqsize));
 		n = send(sockclient, buf, reqsize, MSG_NOSIGNAL|MSG_DONTWAIT);
 	}
 	if (n < 0)
@@ -770,18 +783,20 @@ int modbus_comm(char *request, int reqsize, char *response, int respsize)
 		n = recv(sockclient, buf, 8, MSG_NOSIGNAL|MSG_DONTWAIT);
 		if (n < 0)
 			return commerror("Error in communication with device: %s", strerror(errno));
+		debug(6, "recv from device: %s", mem2hex(buf, n));
 		if (n < 8)
 			return commerror("Device communication timeout");
 		/* ok, check response */
 		if (buf[0]!=0 || buf[1]!=0 || buf[2]!=0 || buf[3]!=0 || buf[4]!=0)
 			return commerror("Protocol error in communication with device");
-		if (buf[5]>respsize+1 || buf[5] == 0 || buf[6]!=0 || (buf[7] & 0x7f) != request[0])
+		if (buf[5]>respsize+1 || buf[5] == 0 || buf[6] != 1 || (buf[7] & 0x7f) != request[0])
 			return commerror("Protocol error in communication with device");
 		response[0] = buf[7];
 		n = recv(sockclient, response+1, respsize-1, MSG_NOSIGNAL|MSG_DONTWAIT);
 		if (n < 0)
 			return commerror("Error in communication with device: %s", strerror(errno));
-		if (n < respsize-1)
+		debug(6, "recv from device: %s", mem2hex(response+1, n));
+		if (n < respsize-1 && (n < 1 || buf[7] == request[0]))
 			return commerror("Device communication timeout");
 	}
 	if (response[0] != request[0]) {
@@ -795,11 +810,7 @@ static XS(modbus_write_registers)
 {
 	dXSARGS;
 	char request[] = { 16, 0, 0, 0, 4, 8, 0, 0, 0, 0, 0, 0, 0, 0 };
-#ifdef ZELIO
 	char response[6];
-#else
-	char response[5];
-#endif
 	unsigned short r;
 	unsigned off, num, i;
 	char debugstr[256];
@@ -821,13 +832,13 @@ static XS(modbus_write_registers)
 	}
 	memset(request, 0, sizeof(request));
 	request[0] = 0x10;
-#ifdef ZELIO
-	request[3] = 0xFF;
-	request[4] = off;
-#else
-	request[2] = off;
-	request[4] = num;
-#endif
+	if (serial_proto) {
+		request[3] = 0xFF;
+		request[4] = off;
+	} else {
+		request[2] = off;
+		request[4] = num;
+	}
 	request[5] = 2*num;
 	debugstr[0] = debugstr[sizeof(debugstr)-1] = '\0';
 	for (i=0; i<num; i++) {
@@ -839,25 +850,23 @@ static XS(modbus_write_registers)
 	debug(2, "modbus write registers at offset %d:%s", off, debugstr);
 	if (modbus_comm(request, 6+2*num, response, sizeof(response)))
 		XSRETURN_UNDEF;
-#ifdef ZELIO
-	if (response[1] != 0 || response[2] != 0 || response[3] != (char)0xFF || response[4] != (char)off || response[5] != num*2) {
-#else
-	if (response[1] != 0 || response[2] != (char)off || response[3] != 0 || response[4] != num) {
-#endif
-		warning("Unexpected answer to write registers request");
-		XSRETURN_UNDEF;
+	if (serial_proto) {
+		if (response[1] == 0 && response[2] == 0 && response[3] == (char)0xFF && response[4] == (char)off && response[5] == num*2) {
+			XSRETURN_IV(1);
+		}
+	} else {
+		if (response[1] == 0 && response[2] == (char)off && response[3] == 0 && response[4] == num) {
+			XSRETURN_IV(1);
+		}
 	}
-	XSRETURN_IV(1);
+	warning("Unexpected answer to write registers request");
+	XSRETURN_UNDEF;
 }
 
 static XS(modbus_read_registers)
 {
 	dXSARGS;
-#ifdef ZELIO
-	char request[] = { 3, 0, 0, 0xFF, 4, 8 };
-#else
-	char request[] = { 3, 0, 0, 0, 4 };
-#endif
+	char request[6];
 	char response[2+2*4];
 	unsigned short r;
 	unsigned off, num, i;
@@ -876,15 +885,15 @@ static XS(modbus_read_registers)
 	}
 	memset(request, 0, sizeof(request));
 	request[0] = 3;
-#ifdef ZELIO
-	request[3] = 0xff;
-	request[4] = (char)off;
-	request[5] = (char)(2*num);
-#else
-	request[2] = (char)off;
-	request[4] = (char)num;
-#endif
-	if (modbus_comm(request, sizeof(request), response, 2+2*num))
+	if (serial_proto) {
+		request[3] = 0xff;
+		request[4] = (char)off;
+		request[5] = (char)(2*num);
+	} else {
+		request[2] = (char)off;
+		request[4] = (char)num;
+	}
+	if (modbus_comm(request, serial_proto ? 6 : 5, response, 2+2*num))
 		XSRETURN_UNDEF;
 	if (response[1] != 2*num) {
 		warning("modbus_read_registers: protocol error");
@@ -1178,7 +1187,7 @@ int get_host_port(char *str, struct in_addr *host, unsigned short *port, int onl
 int main(int argc, char *argv[])
 {
 	int i, k, n;
-	struct timeval tv;
+	struct timeval tv, tv_now, next_req;
 	char *p;
 	struct sockaddr_in serv_addr;
 	struct passwd *pw;
@@ -1220,6 +1229,9 @@ int main(int argc, char *argv[])
 		if (strncmp(argv[optind+1], "/dev/", 5) == 0) {
 			serial = 1;
 			devline = argv[optind+1];
+#ifdef ZELIO
+			serial_proto = 1;	/* Zelio proprietary modbus-like protocol */
+#endif
 		} else
 			get_host_port(argv[optind+1], &devhost, &devport, 1);
 	} else {
@@ -1272,8 +1284,7 @@ int main(int argc, char *argv[])
 	signal(SIGHUP, hup);
 
 	/* Main loop */
-	tv.tv_sec = delay/1000;
-	tv.tv_usec = (delay%1000)*1000;
+	next_req.tv_sec = next_req.tv_usec = 0;
 	while (1) {
 		fd_set r, w;
 		int maxfd, newsock;
@@ -1293,6 +1304,23 @@ int main(int argc, char *argv[])
 				FD_SET(serv[i].sock, &w);
 			if (maxfd <= serv[i].sock)
 				maxfd = serv[i].sock+1;
+		}
+		gettimeofday(&tv_now, NULL);
+		if (next_req.tv_sec < tv_now.tv_sec ||
+		    (next_req.tv_sec == tv_now.tv_sec && next_req.tv_usec <= tv_now.tv_usec)) {
+			tv.tv_sec = tv.tv_usec = 0;
+			if (next_req.tv_sec == 0) { /* first init */
+				next_req.tv_sec = tv_now.tv_sec;
+				next_req.tv_usec = tv_now.tv_usec;
+			}
+		} else {
+			if (next_req.tv_usec >= tv_now.tv_usec) {
+				tv.tv_sec = next_req.tv_sec - tv_now.tv_sec;
+				tv.tv_usec = next_req.tv_usec - tv_now.tv_usec;
+			} else {
+				tv.tv_sec = next_req.tv_sec - tv_now.tv_sec - 1;
+				tv.tv_usec = next_req.tv_usec + 1000000 - tv_now.tv_usec;
+			}
 		}
 		if ((n = select(maxfd, &r, &w, NULL, &tv)) == -1) {
 			if (errno == EINTR)
@@ -1398,8 +1426,6 @@ int main(int argc, char *argv[])
 			}
 		} else {
 			/* timeout, send request to controller */
-			tv.tv_sec = delay/1000;
-			tv.tv_usec = (delay%1000)*1000;
 			if (sockclient == -1 && !serial) {
 				sockclient = connect_client(devhost, devport);
 				if (sockclient == -1) continue;
@@ -1411,6 +1437,14 @@ int main(int argc, char *argv[])
 				washup = 0;
 			}
 			perl_call_request();
+			next_req.tv_usec += (delay%1000)*1000;
+			next_req.tv_sec += delay/1000 + next_req.tv_usec % 1000000;
+			next_req.tv_usec %= 1000000;
+			if (next_req.tv_sec < tv_now.tv_sec ||
+			    (next_req.tv_sec == tv_now.tv_sec && next_req.tv_usec <= tv_now.tv_usec)) {
+				next_req.tv_sec = tv_now.tv_sec;
+				next_req.tv_usec = tv_now.tv_usec;
+			}
 		}
 	}
 	return 0;

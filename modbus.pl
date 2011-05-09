@@ -1,16 +1,22 @@
 
 $sendmail = "/usr/sbin/sendmail -t -odb -oem";
-$day = "17-00:30, 4-6";
+$day = "17-21:00, 5-8";
 $period = 300;
-$cycle = 10; # ms
+$cycle = 20; # ms
 $mysql_host = "localhost";
 $mysql_user = "zelio";
 $mysql_passwd = "********";
 $db = "zelio";
-$rbase = 24;
+#$rbase = 24;	# for serial
+#$wbase = 0;	# for serial
+$rbase = 20;	# for eth
+$wbase = 16;	# for eth
 $wvar = "/usr/local/var/modbus.db";
+# on summer: radiators off, only warm floor
+# on summer: set boiler only by time, ignore temp
+$summer = 0;
 
-use Time::HiRes "gettimeofday";
+use Time::HiRes qw(gettimeofday usleep);
 use DBI;
 use POSIX;
 use DB_File;
@@ -201,7 +207,7 @@ sub request
 
 	logwrite(4, "request");
 	($prev, $prevus) = ($now, $nowus);
-	($now, $nowmus) = gettimeofday();
+	($now, $nowus) = gettimeofday();
 	foreach (keys %tempwvar) {
 		if ($tempwtime{$_} <= $now) {
 			logwrite(1, "Restored value $_ from $tempwvar{$_} to $wvar{$_}");
@@ -209,8 +215,10 @@ sub request
 			delete($tempwtime{$_});
 		}
 	}
-	modbus_write_registers(0, 1, 0) || return undef;	# reset alive
-	modbus_write_registers(0, 1, $alive|$q_electro) || return undef;
+	modbus_write_registers(0+$wbase, 1, 0) || return undef;	# reset alive
+	usleep($cycle*2000);
+	modbus_write_registers(0+$wbase, 1, $alive|$q_electro) || return undef;
+	usleep($cycle*2000);
 	(($r, $el_cnt, $el_time) = modbus_read_registers(0+$rbase, 3)) || return undef;
 	logwrite(5, "el_cnt: $el_cnt, el_time: $el_time");
 	$el_time = 0 if $el_time < 0;
@@ -232,7 +240,7 @@ sub request
 	if ($r & $valid_electro && $el_time) {
 		set_var("electro_cnt", $el_cnt);
 		$sum_el_cnt += $el_cnt - $last_el_cnt if defined($last_el_cnt);
-		set_var("electro_pwr", int((3600*1000/800*50)/$el_time+0.5)); # Watt
+		set_var("electro_pwr", int((3600*1000/800*(1000/$cycle))/$el_time+0.5)); # Watt
 	}
 	$last_el_cnt = $el_cnt;
 
@@ -241,11 +249,14 @@ sub request
 		# set output regs (only boiler now)
 		logwrite(0, "Not valid output regs on controller");
 		$wboiler = (defined($tempwvar{"boiler"}) ? $tempwvar{"boiler"} : $wvar{"boiler"});
-		modbus_write_registers(0, 3, $alive, 0xffff, ($wboiler ? $boiler_set : 0)) || return undef;
-		modbus_write_registers(0, 1, $set_output) || return undef;
+		modbus_write_registers(0+$wbase, 3, $alive, 0xffff, ($wboiler ? $boiler_set : 0)) || return undef;
+		usleep($cycle*2000);
+		modbus_write_registers(0+$wbase, 1, $set_output) || return undef;
+		usleep($cycle*2000);
 	}
 
-	modbus_write_registers(0, 1, $q_temp1) || return undef;
+	modbus_write_registers(0+$wbase, 1, $q_temp1) || return undef;
+	usleep($cycle*2000);
 	(($r, $t1, $mint1) = modbus_read_registers(0+$rbase, 3)) || return undef;
 	if ($r & $alive) {
 		logwrite(1, "Incorrect alive output");
@@ -273,10 +284,13 @@ sub request
 	if ($mint1 != int($wvar{"mint1"}*10+0.5) || !($r & $valid_mint1)) {
 		# controller reloaded? set mint1
 		logwrite(4, "set mint1 to " . int($wvar{"mint1"}*10+0.5));
-		modbus_write_registers(0, 2, $alive, int($wvar{"mint1"}*10+0.5)) || return undef;
-		modbus_write_registers(0, 1, $set_mint1) || return undef;
+		modbus_write_registers(0+$wbase, 2, $alive, int($wvar{"mint1"}*10+0.5)) || return undef;
+		usleep($cycle*2000);
+		modbus_write_registers(0+$wbase, 1, $set_mint1) || return undef;
+		usleep($cycle*2000);
 	}
-	modbus_write_registers(0, 1, $q_temp2) || return undef;
+	modbus_write_registers(0+$wbase, 1, $q_temp2) || return undef;
+	usleep($cycle*2000);
 	(($r, $t2, $mint2) = modbus_read_registers(0+$rbase, 3)) || return undef;
 	if ($r & $alive) {
 		logwrite(1, "Incorrect alive output");
@@ -287,8 +301,10 @@ sub request
 	if ($mint2 != int($wvar{"mint2"}*10+0.5) || !($r & $valid_mint2)) {
 		# controller reloaded? set mint2
 		logwrite(4, "set mint2 to " . int($wvar{"mint2"}*10+0.5));
-		modbus_write_registers(0, 2, $alive, int($wvar{"mint2"}*10+0.5)) || return undef;
-		modbus_write_registers(0, 1, $set_mint2) || return undef;
+		modbus_write_registers(0+$wbase, 2, $alive, int($wvar{"mint2"}*10+0.5)) || return undef;
+		usleep($cycle*2000);
+		modbus_write_registers(0+$wbase, 1, $set_mint2) || return undef;
+		usleep($cycle*2000);
 	}
 	$cur_boiler = ($r & $boiler_out) ? 1 : 0;
 	if ($cur_boiler && $now>$prev && $now-$prev<60) {
@@ -305,14 +321,19 @@ sub request
 		$boiler_state_alarm = 0;
 	}
 	# need to change boiler state?
-	if ($now - $boiler_changed >= 60 || $boiler_state_alarm) {
-		$wvar{"boiler"} = set_boiler();
+	if ($now - $boiler_changed >= 30 || $boiler_state_alarm) {
+		$wvar{"boiler"} = ($summer ? set_boiler_by_time() : set_boiler_by_temp());
 		$wboiler = (defined($tempwvar{"boiler"}) ? $tempwvar{"boiler"} : $wvar{"boiler"});
-		if ($wboiler != $cur_boiler) {
-			logwrite(1, "boiler " . ($wboiler ? "on" : "off"));
+		# every 5 mins, first part on, last part off
+		# i.e if $wboiler=0.1, 12 secs on, then 108 secs off
+		$sboiler = ($now % 300 < 300 * $wboiler ? 1 : 0);
+		if ($sboiler != $cur_boiler) {
+			logwrite(1, "boiler " . ($sboiler ? "on" : "off"));
 			$boiler_changed = $now;
-			modbus_write_registers(0, 3, $alive, $boiler_set, $wboiler ? $boiler_set : 0) || return undef;
-			modbus_write_registers(0, 1, $set_output) || return undef;
+			modbus_write_registers(0+$wbase, 3, $alive, $boiler_set, $sboiler ? $boiler_set : 0) || return undef;
+			usleep($cycle*2000);
+			modbus_write_registers(0+$wbase, 1, $set_output) || return undef;
+			usleep($cycle*2000);
 		}
 	}
 	if (($prev - $prev % $period) != ($now - $now % $period)) {
@@ -448,7 +469,7 @@ EOF
 	logwrite(0, "Sent sms alarm: $text");
 }
 
-sub set_boiler
+sub set_boiler_by_temp
 {
 	# Если в двух местах из трёх ниже комфортной - включаем
 	my ($cnt);
@@ -473,6 +494,11 @@ sub set_boiler
 	} else {
 		return $rvar{"termostat"};
 	}
+}
+
+sub set_boiler_by_time
+{
+	return (day() ? 0.2 : 0);
 }
 
 sub el_changed

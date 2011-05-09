@@ -1,8 +1,6 @@
 
 - snmp
 - several devices
-- zelio (option or configure)
-- tcp: zelio or modbus?
 - gcc options (debug, warnings)
 ? call initgroup() if drop privs
 - alarms: save alarms status on disk
