@@ -654,6 +654,8 @@ int modbus_comm(char *request, int reqsize, char *response, int respsize)
 		}
 		return 0;
 	}
+	if (sockclient == -1)
+		return -1;
 	if (serial) {
 		usleep(INTERVAL);
 #ifdef RTU
