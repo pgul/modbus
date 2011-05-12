@@ -92,21 +92,22 @@ void logwrite(int level, char *format, va_list ap)
 	struct tm *tm;
 	int prio, i, len;
 
-	if (level > verbose) return;
-	gettimeofday(&now, NULL);
-	tm = localtime(&now.tv_sec);
 	vsnprintf(logbuf, sizeof(logbuf)-1, format, ap);
 	if ((p=strrchr(logbuf, '\n')) != NULL && p[1] == '\0')
 		*p = '\0';
-	memset(spaces, ' ', sizeof(spaces));
 	switch (level) {
 		case 0:	prio = LOG_NOTICE; break;
 		case 1:	prio = LOG_INFO; break;
 		default:prio = LOG_DEBUG; break;
 	}
-	syslog(prio, "%s", logbuf);
+	if (level <= 2) /* errors, warnings and debug(0, ...) */
+		syslog(prio, "%s", logbuf);
+	memset(spaces, ' ', sizeof(spaces));
 	spaces[level >= sizeof(spaces) ? sizeof(spaces)-1 : level] = '\0';
-	fprintf(stderr, "%02u:%02u.%02u.%03u %s%s\n", tm->tm_hour, tm->tm_min, tm->tm_sec, now.tv_usec/1000, spaces, logbuf);
+	gettimeofday(&now, NULL);
+	tm = localtime(&now.tv_sec);
+	if (level <= verbose)
+		fprintf(stderr, "%02u:%02u.%02u.%03u %s%s\n", tm->tm_hour, tm->tm_min, tm->tm_sec, now.tv_usec/1000, spaces, logbuf);
 	len = strlen(logbuf);
 	if (len == sizeof(logbuf)-1) {
 		logbuf[sizeof(logbuf)-2] = '\0';
@@ -155,7 +156,7 @@ void initlog(void)
 {
 	openlog("modbus", LOG_PID, LOG_USER);
 	log_opened = 1;
-	debug(0, "started");
+	warning("started");
 }
 
 int connect_client(struct in_addr host, unsigned short int port)
