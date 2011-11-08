@@ -1,5 +1,7 @@
 
 - snmp
+- authorization
+- check device alive
 - several devices
 - gcc options (debug, warnings)
 ? call initgroup() if drop privs
