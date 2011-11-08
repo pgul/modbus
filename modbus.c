@@ -697,7 +697,7 @@ int modbus_comm(char *request, int reqsize, char *response, int respsize)
 		tv.tv_usec = 30 * 1000;
 		do {
 			n = select(sockclient+1, NULL, &fd, NULL, &tv);
-			if (n == -1)
+			if (n == -1) {
 				if (errno == EINTR) {
 					debug(0, "select() interrupted by signal");
 					continue;
