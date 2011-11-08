@@ -695,12 +695,19 @@ int modbus_comm(char *request, int reqsize, char *response, int respsize)
 		FD_SET(sockclient, &fd);
 		tv.tv_sec = 0;
 		tv.tv_usec = 30 * 1000;
-		n = select(sockclient+1, NULL, &fd, NULL, &tv);
-		if (n == -1)
-			return commerror("Error in communication with device: %s", strerror(errno));
-		if (n == 0)
-			return commerror("Device communication timeout for writing");
-		debug(6, "send to device: %s", mem2hex(buf, reqsize));
+		do {
+			n = select(sockclient+1, NULL, &fd, NULL, &tv);
+			if (n == -1)
+				if (errno == EINTR) {
+					debug(0, "select() interrupted by signal");
+					continue;
+				}
+				return commerror("Error in communication with device: %s", strerror(errno));
+			}
+			if (n == 0)
+				return commerror("Device communication timeout for writing");
+			debug(6, "send to device: %s", mem2hex(buf, reqsize));
+		} while (0);
 		n = send(sockclient, buf, reqsize, MSG_NOSIGNAL|MSG_DONTWAIT);
 	}
 	if (n < 0)
@@ -969,7 +976,7 @@ static XS(perl_logwrite)
 
 	/* fetch registers from stack */
 	if (items != 2) {
-		warning("logwrite: wrong number of params (need 1, exists %d)", items);
+		warning("logwrite: wrong number of params (need 2, exists %d)", items);
 		XSRETURN_EMPTY;
 	}
 	level = SvUV(ST(0));
