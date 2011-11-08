@@ -215,7 +215,18 @@ sub request
 			delete($tempwtime{$_});
 		}
 	}
-	modbus_write_registers(0+$wbase, 1, 0) || return undef;	# reset alive
+	if (modbus_write_registers(0+$wbase, 1, 0)) {
+		sms_alarm("Zelio device up") if $device_alarmed < 0;
+		$device_alarmed = 0;
+	} else {
+		if ($device_alarmed >= 0 {
+			if ($device_alarmed++ == 60) {
+				$device_alarmed = -1;
+				sms_alarm("Zelio device down");
+			}
+		}
+		return undef;
+	}
 	usleep($cycle*2000);
 	modbus_write_registers(0+$wbase, 1, $alive|$q_electro) || return undef;
 	usleep($cycle*2000);
