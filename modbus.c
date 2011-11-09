@@ -698,7 +698,7 @@ int modbus_comm(char *request, int reqsize, char *response, int respsize)
 		do {
 			n = select(sockclient+1, NULL, &fd, NULL, &tv);
 			if (n == -1) {
-				if (errno == EINTR) {
+				if (errno == EINTR || errno == EAGAIN) {
 					debug(0, "select() interrupted by signal");
 					continue;
 				}
