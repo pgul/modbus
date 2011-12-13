@@ -96,11 +96,13 @@ void logwrite(int level, char *format, va_list ap)
 	if ((p=strrchr(logbuf, '\n')) != NULL && p[1] == '\0')
 		*p = '\0';
 	switch (level) {
-		case 0:	prio = LOG_NOTICE; break;
-		case 1:	prio = LOG_INFO; break;
+		case 0:	prio = LOG_ERR; break;
+		case 1:	prio = LOG_WARNING; break;
+		case 2:	prio = LOG_NOTICE; break;
+		case 3:	prio = LOG_INFO; break;
 		default:prio = LOG_DEBUG; break;
 	}
-	if (level <= 2) /* errors, warnings and debug(0, ...) */
+	if (level <= 4) /* errors, warnings and debug([012], ...) */
 		syslog(prio, "%s", logbuf);
 	memset(spaces, ' ', sizeof(spaces));
 	spaces[level >= sizeof(spaces) ? sizeof(spaces)-1 : level] = '\0';
@@ -279,7 +281,7 @@ int process_command(char *command, char *resp, int *resp_len, int *debuglevel)
 	STRLEN len;
 	SV *sv;
 
-	debug(4, "Process command: %s", command);
+	debug(2, "Process command: %s", command);
 	if ((sv = perl_get_sv("bye", TRUE)) != NULL)
 		sv_setiv(sv, 0);
 	if ((sv = perl_get_sv("debug", TRUE)) != NULL)
@@ -296,7 +298,7 @@ int process_command(char *command, char *resp, int *resp_len, int *debuglevel)
 		sv=POPs;
 		prc = SvPV(sv, len);
 		prc = len ? prc : "";
-		debug(4, "Response: %s", prc);
+		debug(2, "Response: %s", prc);
 		strncpy(resp, prc, *resp_len);
 		*resp_len = (len > *resp_len ? 0 : *resp_len - len);
 		PUTBACK;
@@ -307,7 +309,7 @@ int process_command(char *command, char *resp, int *resp_len, int *debuglevel)
 		else {
 			sv = perl_get_sv("bye", FALSE);
 			if (sv && SvTRUE(sv)) {
-				debug(1, "Bye");
+				debug(2, "Bye");
 				rc = 1;
 			}
 			sv = perl_get_sv("debug", FALSE);
@@ -321,7 +323,7 @@ int process_command(char *command, char *resp, int *resp_len, int *debuglevel)
 
 void perl_call_init(void)
 {
-	debug(2, "call init");
+	debug(1, "call init");
 	/* call perl function init() */
 	{	dSP;
 		ENTER;
@@ -342,7 +344,7 @@ void perl_call_init(void)
 
 void perl_call_deinit(void)
 {
-	debug(2, "call deinit");
+	debug(1, "call deinit");
 	/* call perl function deinit() */
 	{	dSP;
 		ENTER;
@@ -366,7 +368,7 @@ int perl_call_request(void)
 	int rc = 0;
 	SV *sv;
 
-	debug(4, "call request");
+	debug(3, "call request");
 	/* call perl function request() */
 	{	dSP;
 		ENTER;
@@ -699,7 +701,7 @@ int modbus_comm(char *request, int reqsize, char *response, int respsize)
 			n = select(sockclient+1, NULL, &fd, NULL, &tv);
 			if (n == -1) {
 				if (errno == EINTR || errno == EAGAIN) {
-					debug(0, "select() interrupted by signal");
+					debug(1, "select() interrupted by signal");
 					continue;
 				}
 				return commerror("Error in communication with device: %s", strerror(errno));
@@ -857,7 +859,7 @@ static XS(modbus_write_registers)
 		strncat(debugstr, " ", sizeof(debugstr)-strlen(debugstr)-1);
 		snprintf(debugstr+strlen(debugstr), sizeof(debugstr)-strlen(debugstr)-1, "0x%02X (%d)", SvUV(ST(i+2)), (short)SvUV(ST(i+2)));
 	}
-	debug(2, "modbus write registers at offset %d:%s", off, debugstr);
+	debug(4, "modbus write registers at offset %d:%s", off, debugstr);
 	if (modbus_comm(request, 6+2*num, response, serial_proto ? 6 : 5))
 		XSRETURN_UNDEF;
 	if (serial_proto) {
@@ -886,7 +888,7 @@ static XS(modbus_read_registers)
 		warning("modbus_read_registers: wrong number of params (need 2, exists %d)", items);
 		XSRETURN_UNDEF;
 	}
-	debug(3, "call modbus read registers");
+	debug(4, "call modbus read registers");
 	num = POPi;
 	off = POPi;
 	if (off>100 || num > 4) {
@@ -916,7 +918,7 @@ static XS(modbus_read_registers)
 		strncat(debugstr, " ", sizeof(debugstr)-strlen(debugstr)-1);
 		snprintf(debugstr+strlen(debugstr), sizeof(debugstr)-strlen(debugstr)-1, "0x%02X (%d)", r, (short)r);
 	}
-	debug(2, "modbus read registers at offset %d:%s", off, debugstr);
+	debug(4, "modbus read registers at offset %d:%s", off, debugstr);
 	XSRETURN(num);
 }
 
@@ -933,7 +935,7 @@ static XS(modbus_read_write_registers)
 		warning("modbus_read_write_registers: wrong number of params (need >=4, exists %d)", items);
 		XSRETURN_UNDEF;
 	}
-	debug(3, "call modbus read and write registers");
+	debug(4, "call modbus read and write registers");
 	roff = SvUV(ST(0));
 	rnum = SvUV(ST(1));
 	woff = SvUV(ST(2));
@@ -1376,7 +1378,7 @@ int main(int argc, char *argv[])
 						continue;
 					}
 					if (n == 0) {
-						debug(0, "session closed");
+						debug(2, "session closed");
 						close_serv(i);
 						i--;
 						continue;
