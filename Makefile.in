@@ -6,7 +6,7 @@ CFLAGS=@DEFS@ @CFLAGS@ -DZELIO
 
 all: modbus
 
-modbus: $(OBJS)
+modbus: $(OBJS) Makefile
 	$(CC) $(CFLAGS) -o $@ $(OBJS) @LIBS@
 
 .c.o:	Makefile
