@@ -28,7 +28,7 @@
 #define INQSIZE		16384
 #define OUTQSIZE	16384
 #define MAXSERVERS	16
-#define RESSIZE		1024
+#define RESSIZE		8192
 
 #define MTU		128
 #define DEVID		1
