@@ -102,6 +102,7 @@ sub command
 		} else {
 			$wvar{$var} = $val;
 			$res = "R ok\n";
+			(tied %wvar)->sync();
 		}
 		# write registers
 		# ...

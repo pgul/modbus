@@ -1014,6 +1014,11 @@ void hup(int signo)
 	washup=1;
 }
 
+void term(int signo)
+{
+	exit(1);
+}
+
 PerlInterpreter *perl_init(char *perlfile, int first)
 {
 	int rc, i;
@@ -1109,9 +1114,12 @@ void perl_reload(char *perlfile)
 
 	newperl = perl_init(perlfile, 0);
 	if (newperl) {
-		PERL_SET_CONTEXT(perl);
-		perl_destruct(perl);
-		perl_free(perl);
+		if (perl) {
+			PERL_SET_CONTEXT(perl);
+			perl_call_deinit();
+			perl_destruct(perl);
+			perl_free(perl);
+		}
 		perl = newperl;
 		PERL_SET_CONTEXT(perl);
 		perl_call_init();
@@ -1119,9 +1127,12 @@ void perl_reload(char *perlfile)
 		PERL_SET_CONTEXT(perl);
 	}
 #else
-	PL_perl_destruct_level = 1;
-	perl_destruct(perl);
-	perl_free(perl);
+	if (perl) {
+		perl_call_deinit();
+		PL_perl_destruct_level = 1;
+		perl_destruct(perl);
+		perl_free(perl);
+	}
 	perl = perl_init(perlfile, 0);
 	if (perl == NULL)
 		error("Error in perl module, cannot continue");
@@ -1294,6 +1305,8 @@ int main(int argc, char *argv[])
 	signal(SIGPIPE, SIG_IGN);
 #endif
 	signal(SIGHUP, hup);
+	signal(SIGINT, term);
+	signal(SIGTERM, term);
 
 	/* Main loop */
 	next_req.tv_sec = next_req.tv_usec = 0;
