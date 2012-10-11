@@ -1136,6 +1136,8 @@ void perl_reload(char *perlfile)
 	perl = perl_init(perlfile, 0);
 	if (perl == NULL)
 		error("Error in perl module, cannot continue");
+	else
+		perl_call_init();
 #endif
 }
 
