@@ -57,7 +57,7 @@ struct servtype {
 } serv[MAXSERVERS];
 char *perlfile;
 PerlInterpreter *perl;
-int washup, nservers, sockfd = -1, sockclient = -1;
+int washup, wasterm, nservers, sockfd = -1, sockclient = -1;
 int serial = 0, serial_proto = 0, log_opened;
 char logbuf[256];
 char *devline;
@@ -1016,7 +1016,7 @@ void hup(int signo)
 
 void term(int signo)
 {
-	exit(1);
+	wasterm=1;
 }
 
 PerlInterpreter *perl_init(char *perlfile, int first)
@@ -1350,8 +1350,18 @@ int main(int argc, char *argv[])
 			}
 		}
 		if ((n = select(maxfd, &r, &w, NULL, &tv)) == -1) {
-			if (errno == EINTR)
+			if (errno == EINTR) {
+				if (washup) {
+					debug(0, "sighup received, perl reloaded");
+					perl_reload(perlfile);
+					washup = 0;
+				}
+				if (wasterm) {
+					debug(0, "sigterm received, exiting");
+					exit(1);
+				}
 				continue;
+			}
 			error("Select error: %s", strerror(errno));
 		}
 		if (n) {
@@ -1410,6 +1420,10 @@ int main(int argc, char *argv[])
 						perl_reload(perlfile);
 						washup = 0;
 					}
+					if (wasterm) {
+						debug(0, "sigterm received, exiting");
+						exit(1);
+					}
 					while ((p = memchr(serv[i].inq, '\n', serv[i].inq_len)) != NULL) {
 						char res[RESSIZE];
 						int reslen;
@@ -1425,6 +1439,8 @@ int main(int argc, char *argv[])
 						if (n) /* quit command */
 							serv[i].bye = 1;
 					}
+					if (serv[i].inq_len && serv[i].inq[0] == '\x04') /* ^D */
+						serv[i].bye = 1;
 				}
 			}
 			if (FD_ISSET(sockfd, &r)) {
@@ -1462,6 +1478,10 @@ int main(int argc, char *argv[])
 				debug(0, "sighup received, perl reloaded");
 				perl_reload(perlfile);
 				washup = 0;
+			}
+			if (wasterm) {
+				debug(0, "sigterm received, exiting");
+				exit(1);
 			}
 			perl_call_request();
 			next_req.tv_usec += (delay%1000)*1000;
