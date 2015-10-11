@@ -1,11 +1,17 @@
 
+- save el_cnt_base in mysql
 - snmp
 - authorization
 - check device alive
 - several devices
 - gcc options (debug, warnings)
-? call initgroup() if drop privs
+- optional initgroup() call if drop privs
+- setgid option (or "-u user:group" syntax)
 - alarms: save alarms status on disk
 - day/night temp
 - modbus server inactivity timeout
+- if no access to perlfile, report "cannot read", not "no command() function"
+- "daily" command, periodic manually set variable
+
++ why persistant set mint* on zelio?
 
