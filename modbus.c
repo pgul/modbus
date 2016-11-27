@@ -109,7 +109,7 @@ void logwrite(int level, char *format, va_list ap)
 	gettimeofday(&now, NULL);
 	tm = localtime(&now.tv_sec);
 	if (level <= verbose)
-		fprintf(stderr, "%02u:%02u.%02u.%03u %s%s\n", tm->tm_hour, tm->tm_min, tm->tm_sec, now.tv_usec/1000, spaces, logbuf);
+		fprintf(stderr, "%02u:%02u:%02u.%03u %s%s\n", tm->tm_hour, tm->tm_min, tm->tm_sec, (unsigned int)(now.tv_usec/1000), spaces, logbuf);
 	len = strlen(logbuf);
 	if (len == sizeof(logbuf)-1) {
 		logbuf[sizeof(logbuf)-2] = '\0';
@@ -147,7 +147,6 @@ void warning(char *format, ...)
 void debug(int level, char *format, ...)
 {
 	va_list ap;
-	int prio;
 
 	va_start(ap, format);
 	logwrite(level+2, format, ap);
@@ -576,6 +575,7 @@ int crc(char *str, int len)
 	return (uchCRCHi << 8 | uchCRCLo);
 }
 
+#ifndef RTU
 static char lrc(char *str, int len)
 {
 	unsigned char uchLRC = 0;
@@ -584,6 +584,7 @@ static char lrc(char *str, int len)
 		uchLRC += (unsigned char)*str++;
 	return -((char)uchLRC)+1;
 }
+#endif
 
 static char digit[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
 
@@ -608,7 +609,6 @@ char unhexbyte(char *buf)
 char *mem2hex(char *buf, int bufsize)
 {
 	static char hexstr[256];
-	int i;
 
 	hexstr[0] = hexstr[sizeof(hexstr)-1] = '\0';
 	while (bufsize > 0) {
@@ -726,8 +726,6 @@ int modbus_comm(char *request, int reqsize, char *response, int respsize)
 	if (n == 0)
 		return commerror("Device communication timeout for reading");
 	if (serial) {
-		unsigned int icrc;
-	
 #ifdef RTU
 		n = recv_serial(sockclient, buf, 5);  /* slave-id(1), func(1), exeption(1), crc(2) */
 		if (n < 0)
@@ -857,7 +855,7 @@ static XS(modbus_write_registers)
 		r = htons(SvUV(ST(i+2)));
 		memcpy(request+6+2*i,  &r, 2);
 		strncat(debugstr, " ", sizeof(debugstr)-strlen(debugstr)-1);
-		snprintf(debugstr+strlen(debugstr), sizeof(debugstr)-strlen(debugstr)-1, "0x%02X (%d)", SvUV(ST(i+2)), (short)SvUV(ST(i+2)));
+		snprintf(debugstr+strlen(debugstr), sizeof(debugstr)-strlen(debugstr)-1, "0x%02X (%d)", (unsigned int)SvUV(ST(i+2)), (short)SvUV(ST(i+2)));
 	}
 	debug(4, "modbus write registers at offset %d:%s", off, debugstr);
 	if (modbus_comm(request, 6+2*num, response, serial_proto ? 6 : 5))
@@ -1211,7 +1209,7 @@ int get_host_port(char *str, struct in_addr *host, unsigned short *port, int onl
 
 int main(int argc, char *argv[])
 {
-	int i, k, n;
+	int i, n;
 	struct timeval tv, tv_now, next_req;
 	char *p;
 	struct sockaddr_in serv_addr;
