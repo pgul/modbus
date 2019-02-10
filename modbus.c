@@ -264,11 +264,11 @@ void new_client(char *resp, int *resp_len)
 		debug(4, "Response: %s", prc);
 		strncpy(resp, prc, *resp_len);
 		*resp_len = (len > *resp_len ? 0 : *resp_len - len);
+		if (SvTRUE(ERRSV))
+			sub_err("new_client");
 		PUTBACK;
 		FREETMPS;
 		LEAVE;
-		if (SvTRUE(ERRSV))
-			sub_err("new_client");
 	}
 	return;
 }
@@ -300,9 +300,6 @@ int process_command(char *command, char *resp, int *resp_len, int *debuglevel)
 		debug(2, "Response: %s", prc);
 		strncpy(resp, prc, *resp_len);
 		*resp_len = (len > *resp_len ? 0 : *resp_len - len);
-		PUTBACK;
-		FREETMPS;
-		LEAVE;
 		if (SvTRUE(ERRSV))
 			sub_err("command");
 		else {
@@ -316,6 +313,9 @@ int process_command(char *command, char *resp, int *resp_len, int *debuglevel)
 				*debuglevel = SvIV(sv);
 			}
 		}
+		PUTBACK;
+		FREETMPS;
+		LEAVE;
 	}
 	return rc;
 }
@@ -331,12 +331,11 @@ void perl_call_init(void)
 		PUTBACK;
 		perl_call_pv("init", G_EVAL|G_VOID);
 		SPAGAIN;
+		if (SvTRUE(ERRSV))
+			sub_err("init");
 		PUTBACK;
 		FREETMPS;
 		LEAVE;
-		if (SvTRUE(ERRSV))
-			sub_err("init");
-
 	}
 	return;
 }
@@ -352,12 +351,11 @@ void perl_call_deinit(void)
 		PUTBACK;
 		perl_call_pv("deinit", G_EVAL|G_VOID);
 		SPAGAIN;
+		if (SvTRUE(ERRSV))
+			sub_err("deinit");
 		PUTBACK;
 		FREETMPS;
 		LEAVE;
-		if (SvTRUE(ERRSV))
-			sub_err("deinit");
-
 	}
 	return;
 }
@@ -377,13 +375,13 @@ int perl_call_request(void)
 		perl_call_pv("request", G_EVAL|G_SCALAR);
 		SPAGAIN;
 		sv=POPs;
-		PUTBACK;
-		FREETMPS;
-		LEAVE;
 		if (SvTRUE(ERRSV))
 			sub_err("request");
 		else if (!SvTRUE(sv))
 			rc = -1;
+		PUTBACK;
+		FREETMPS;
+		LEAVE;
 	}
 	return rc;
 }
