@@ -299,7 +299,7 @@ int process_command(char *command, char *resp, int *resp_len, int *debuglevel)
 		prc = len ? prc : "";
 		debug(2, "Response: %s", prc);
 		strncpy(resp, prc, *resp_len);
-		*resp_len = (len > *resp_len ? 0 : *resp_len - len);
+		*resp_len = (len > *resp_len ? *resp_len : len);
 		if (SvTRUE(ERRSV))
 			sub_err("command");
 		else {
