@@ -960,8 +960,10 @@ static XS(modbus_read_write_registers)
 		XSRETURN_UNDEF;
 	}
 	/* put registers as return array */
-	for (i=0; i<rnum; i++)
-		memcpy(&r, response+2+2*i, 2); XPUSHs(sv_2mortal(newSViv((short)ntohs(r))));
+	for (i=0; i<rnum; i++) {
+		memcpy(&r, response+2+2*i, 2);
+		XPUSHs(sv_2mortal(newSViv((short)ntohs(r))));
+	}
 	XSRETURN(rnum);
 }
 
